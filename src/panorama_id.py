@@ -1,0 +1,319 @@
+"""
+This module allows panorama images to be downloaded by the
+internal panorama IDs. The user is responsible for obtaining
+the panorama IDs for the panoramas they wish to download.
+Also, zooming in/out is supported, alongside partial downloading.
+"""
+import asyncio
+import io
+import itertools
+import time
+
+import aiohttp
+import requests as rq
+from PIL import Image
+
+from utils import _split_array
+
+
+MIN_ZOOM = 0
+MAX_ZOOM = 5
+MIN_COORDINATES = (0, 0)
+MAX_TILES_WIDTH = 16
+MAX_TILES_HEIGHT = 8
+
+PANORAMA_ID_LENGTH = 22
+PANORAMA_DOWNLOAD_API = "https://streetviewpixels-pa.googleapis.com/v1/tile"
+MAX_RETRIES = 2
+MAX_ASYNC_COROUTINES = 8
+TILE_WIDTH = 512
+TILE_HEIGHT = 512
+
+
+def get_max_coordinates(zoom: int) -> tuple[int, int]:
+    """Returns the maximum (bottom right) coordinates for a given zoom."""
+    return (2 ** zoom, max(1, 2 ** (zoom - 1)))
+
+
+def validate_coordinates(coordinates: tuple[int, int]) -> None:
+    """Raises an error if `coordinates` is not a 2-tuple of integers."""
+    # Expecting a tuple, accept a list too.
+    if not isinstance(coordinates, (tuple, list)) or len(coordinates) != 2:
+        raise TypeError("Coordinates must be a 2-tuple.")
+    if not all(isinstance(value, int) for value in coordinates):
+        raise TypeError("Coordinates must have integer points only.")
+
+
+def in_rectangle(
+    top_left: tuple[int, int], bottom_right: tuple[int, int],
+    coordinates: tuple[int, int]
+) -> bool:
+    """Returns True if coordinates lie in a given rectangle, else False."""
+    return (
+        top_left[0] <= coordinates[0] <= bottom_right[0]
+        and top_left[1] <= coordinates[1] <= bottom_right[1])
+
+
+class PanoramaSettings:
+    """
+    Allows the user to set the panorama download settings, including:
+    - Level of zoom.
+    - Top left and bottom right coordinates.
+    """
+
+    def __init__(
+        self, zoom: int = 0, top_left: tuple[int, int] = None,
+        bottom_right: tuple[int, int] = None
+    ) -> None:
+        self.update(zoom, top_left, bottom_right)
+    
+    def update(
+        self, zoom: int, top_left: tuple[int, int],
+        bottom_right: tuple[int, int]
+    ) -> None:
+        """Sets/updates the settings."""
+        self._set_zoom(zoom)
+        self._set_top_left(MIN_COORDINATES if top_left is None else top_left)
+        if bottom_right is None:
+            # Use maximum coordinates for the entire panorama (default).
+            self._set_bottom_right(get_max_coordinates(self.zoom))
+        else:
+            self._set_bottom_right(bottom_right)
+    
+    def _set_zoom(self, zoom: int) -> None:
+        if not isinstance(zoom, int):
+            raise TypeError("Zoom must be an integer.")
+        if zoom < MIN_ZOOM:
+            raise ValueError(f"Zoom must be at least {MIN_ZOOM}.")
+        if zoom > MAX_ZOOM:
+            raise ValueError(f"Zoom must be {MAX_ZOOM} or less.")
+        self._zoom = zoom
+    
+    def _set_top_left(self, top_left: tuple[int, int]) -> None:
+        validate_coordinates(top_left)
+        if not in_rectangle(
+            MIN_COORDINATES, get_max_coordinates(self.zoom), top_left
+        ):
+            raise ValueError("Top-left coordinates out of bounds.")
+        self._top_left = tuple(top_left)
+
+    def _set_bottom_right(self, bottom_right: tuple[int, int]) -> None:
+        validate_coordinates(bottom_right)
+        if not in_rectangle(
+            MIN_COORDINATES, get_max_coordinates(self.zoom), bottom_right
+        ):
+            raise ValueError("Bottom-right coordinates out of bounds.")
+        # Top-left is always set first, then the bottom right, so ensure
+        # here that the bottom right is greater than top left
+        # on both the x and y axes.
+        if (
+            bottom_right[0] <= self.top_left[0]
+            or bottom_right[1] <= self.top_left[1]
+        ):
+            raise ValueError(
+                "Bottom-right coordinates must have x and y values "
+                "greater than the top-left coordinates.")
+        self._bottom_right = tuple(bottom_right)
+    
+    @property
+    def zoom(self) -> int:
+        """Current zoom level [0-5]"""
+        return self._zoom
+    
+    @property
+    def top_left(self) -> tuple[int, int]:
+        """Top-left coordinates (x, y)"""
+        return self._top_left
+
+    @property
+    def bottom_right(self) -> tuple[int, int]:
+        """Bottom-right coordinates (x, y)"""
+        return self._bottom_right
+    
+    @property
+    def tiles(self) -> int:
+        """Number of tiles covered by the current settings."""
+        return self.width * self.height
+
+    @property
+    def width(self) -> int:
+        """Width of the tiles covered by the settings."""
+        return self.bottom_right[0] - self.top_left[0]
+    
+    @property
+    def height(self) -> int:
+        """Height of the tiles covered by the settings."""
+        return self.bottom_right[1] - self.top_left[1]
+    
+
+def validate_panorama_id(panorama_id: str) -> None:
+    """Performs basic validation on the panorama ID."""
+    if not isinstance(panorama_id, str):
+        raise TypeError("Panorama ID must be a string.")
+    if len(panorama_id) != PANORAMA_ID_LENGTH:
+        raise ValueError(
+            f"Panorama ID must be {PANORAMA_ID_LENGTH} characters long.")
+
+
+async def _get_async_images_batch(
+    array: list[list], batch: list[tuple], panorama_id: str,
+    settings: PanoramaSettings
+) -> None:
+    min_x, min_y = settings.top_left
+    async with aiohttp.ClientSession() as session:
+        for y, x in batch:
+            params = {
+                "cb_client": "maps_sv.tactile", "panoid": panorama_id,
+                "x": x, "y": y, "zoom": settings.zoom
+            }
+            retries = MAX_RETRIES
+            while True:
+                try:
+                    async with session.get(
+                        PANORAMA_DOWNLOAD_API, params=params
+                    ) as response:
+                        match response.status:
+                            case 200:
+                                array[y-min_y][x-min_x] = await response.read()
+                                break
+                            case 400:
+                                raise rq.RequestException("400 - Bad Request")
+                            case _:
+                                raise rq.RequestException(
+                                    f"{response.status} "
+                                    "- something went wrong.")
+                except Exception as e:
+                    if not retries:
+                        raise e
+                    time.sleep(1)
+                retries -= 1
+    
+
+async def _get_async_images(
+    array: list[list], panorama_id: str, settings: PanoramaSettings
+) -> None:
+    # Splits required tiles into batches.
+    batches = _split_array(
+        list(itertools.product(
+            range(settings.top_left[1], settings.bottom_right[1]),
+            range(settings.top_left[0], settings.bottom_right[0]))), 
+        MAX_ASYNC_COROUTINES)
+    await asyncio.gather(
+        *(_get_async_images_batch(array, batch, panorama_id, settings)
+        for batch in batches))
+
+
+def get_images(
+    panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
+) -> list[list[bytes]]:
+    """
+    Returns a 2D list of images in bytes,
+    where each element is one tile at one (x, y) coordinate, as defined
+    in the settings.
+    If settings are not provided, use the default settings.
+    If use_async is set to True, then speed up image downloads using
+    asynchronous processing. Otherwise, use standard, serial requests.
+    """
+    validate_panorama_id(panorama_id)
+    if settings is None:
+        settings = PanoramaSettings()
+    if not isinstance(settings, PanoramaSettings):
+        raise TypeError("Settings must be a PanoramaSettings object.")
+    if use_async and settings.tiles > 1:
+        images = [[None] * settings.width for _ in range(settings.height)]
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.run(_get_async_images(images, panorama_id, settings))
+    else:
+        images = []
+        for y in range(settings.top_left[1], settings.bottom_right[1]):
+            image_row = []
+            for x in range(settings.top_left[0], settings.bottom_right[0]):
+                params = {
+                    "cb_client": "maps_sv.tactile", "panoid": panorama_id,
+                    "x": x, "y": y, "zoom": settings.zoom
+                }
+                retries = MAX_RETRIES
+                while True:
+                    try:
+                        response = rq.get(PANORAMA_DOWNLOAD_API, params)
+                        match response.status_code:
+                            case 200:
+                                image_data = response.content
+                                image_row.append(image_data)
+                                break
+                            case 400:
+                                raise rq.RequestException("400 - Bad Request")
+                            case _:
+                                raise rq.RequestException(
+                                    f"{response.status_code} "
+                                    "- something went wrong.")
+                    except Exception as e:
+                        if not retries:
+                            raise e
+                        time.sleep(1)
+                    retries -= 1
+            images.append(image_row)
+    return images
+
+
+def get_pil_images(
+    panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
+) -> list[list[Image.Image]]:
+    """
+    Returns a 2D list of PIL Image objects, where each Image represents a tile
+    at a particular (x, y) coordinate specified in the settings.
+    If settings are not provided, use the default settings.
+    """
+    images = get_images(panorama_id, settings, use_async)
+    return [[Image.open(io.BytesIO(tile)) for tile in row] for row in images]
+
+
+def get_pil_image(
+    panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
+) -> Image.Image:
+    """
+    Downloads all required tiles of a panorama,
+    and then merges the tiles together, returning a single PIL Image.
+    The maximum width is 16 tiles, the maximum height is 8 tiles
+    (entire zoom <= 4 possible, partial zoom = 5 possible).
+    """
+    if settings is None:
+        settings = PanoramaSettings()
+    if settings.width > MAX_TILES_WIDTH or settings.height > MAX_TILES_HEIGHT:
+        raise ValueError(
+            f"A full image can only be up to {MAX_TILES_WIDTH} tiles in width "
+            f"and {MAX_TILES_HEIGHT} tiles in height.")
+    tiles = get_images(panorama_id, settings, use_async)
+    if settings.zoom == 0:
+        # Only one tile - return it.
+        return Image.open(io.BytesIO(tiles[0][0]))
+    # Concatenates rows into single images and then
+    # concatenates the rows into a single image.
+    rows = []
+    for row in tiles:
+        row_image = Image.new("RGB", (TILE_WIDTH * len(row), TILE_HEIGHT))
+        for i, tile in enumerate(row):
+            tile = Image.open(io.BytesIO(tile))
+            row_image.paste(
+                tile, (TILE_WIDTH * i, 0, TILE_WIDTH * (i+1), TILE_HEIGHT))
+        rows.append(row_image)
+    width, _ = rows[0].size
+    image = Image.new("RGB", (width, TILE_HEIGHT * len(rows)))
+    for i, row in enumerate(rows):
+        image.paste(row, (0, TILE_HEIGHT * i, width, TILE_HEIGHT * (i+1)))
+    return image
+
+
+def get_image(
+    panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
+) -> bytes:
+    """
+    Downloads all required tiles of a panorama and returns the image
+    with the merged tiles, in bytes.
+    The maximum width is 16 tiles, the maximum height is 8 tiles
+    (entire zoom <= 4 possible, partial zoom = 5 possible).
+    """
+    image = get_pil_image(panorama_id, settings, use_async)
+    with io.BytesIO() as f:
+        image.save(f, format="jpeg")
+        return f.getvalue()
