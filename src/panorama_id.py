@@ -7,6 +7,7 @@ Also, zooming in/out is supported, alongside partial downloading.
 import asyncio
 import io
 import itertools
+import string
 import time
 
 import aiohttp
@@ -22,6 +23,7 @@ MIN_COORDINATES = (0, 0)
 MAX_TILES_WIDTH = 16
 MAX_TILES_HEIGHT = 8
 
+PANORAMA_CHARACTERS = f"{string.ascii_letters}{string.digits}-_"
 PANORAMA_ID_LENGTH = 22
 PANORAMA_DOWNLOAD_API = "https://streetviewpixels-pa.googleapis.com/v1/tile"
 MAX_RETRIES = 2
@@ -153,6 +155,10 @@ def validate_panorama_id(panorama_id: str) -> None:
     if len(panorama_id) != PANORAMA_ID_LENGTH:
         raise ValueError(
             f"Panorama ID must be {PANORAMA_ID_LENGTH} characters long.")
+    if any(char not in PANORAMA_CHARACTERS for char in panorama_id):
+        raise ValueError(
+            "Panorama ID must only contain letters, numbers "
+            "and dashes/underscores.")
 
 
 async def _get_async_images_batch(
@@ -203,7 +209,7 @@ async def _get_async_images(
         for batch in batches))
 
 
-def get_images(
+def get_tiles(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> list[list[bytes]]:
     """
@@ -256,7 +262,7 @@ def get_images(
     return images
 
 
-def get_pil_images(
+def get_pil_tiles(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> list[list[Image.Image]]:
     """
@@ -264,11 +270,11 @@ def get_pil_images(
     at a particular (x, y) coordinate specified in the settings.
     If settings are not provided, use the default settings.
     """
-    images = get_images(panorama_id, settings, use_async)
-    return [[Image.open(io.BytesIO(tile)) for tile in row] for row in images]
+    tiles = get_tiles(panorama_id, settings, use_async)
+    return [[Image.open(io.BytesIO(tile)) for tile in row] for row in tiles]
 
 
-def get_pil_image(
+def get_pil_panorama(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> Image.Image:
     """
@@ -283,7 +289,7 @@ def get_pil_image(
         raise ValueError(
             f"A full image can only be up to {MAX_TILES_WIDTH} tiles in width "
             f"and {MAX_TILES_HEIGHT} tiles in height.")
-    tiles = get_images(panorama_id, settings, use_async)
+    tiles = get_tiles(panorama_id, settings, use_async)
     if settings.zoom == 0:
         # Only one tile - return it.
         return Image.open(io.BytesIO(tiles[0][0]))
@@ -304,7 +310,7 @@ def get_pil_image(
     return image
 
 
-def get_image(
+def get_panorama(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> bytes:
     """
@@ -313,7 +319,7 @@ def get_image(
     The maximum width is 16 tiles, the maximum height is 8 tiles
     (entire zoom <= 4 possible, partial zoom = 5 possible).
     """
-    image = get_pil_image(panorama_id, settings, use_async)
+    image = get_pil_panorama(panorama_id, settings, use_async)
     with io.BytesIO() as f:
         image.save(f, format="jpeg")
         return f.getvalue()

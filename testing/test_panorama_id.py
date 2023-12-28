@@ -1,4 +1,4 @@
-"""Unit Tests the panaroma_id.py module."""
+"""Unit Tests the panorama_id.py module."""
 import unittest
 
 import __init__
@@ -29,44 +29,46 @@ class Test_panorama_id(unittest.TestCase):
     def test_validate_panorama_id(self) -> None:
         self.assertRaises(TypeError, validate_panorama_id, 123456)
         self.assertRaises(ValueError, validate_panorama_id, "tooShort12345")
-        validate_panorama_id("*"*22)
+        self.assertRaises(ValueError, validate_panorama_id, "*"*22)
+        validate_panorama_id("a"*22)
     
-    def test_get_images(self) -> None:
-        self.assertRaises(rq.RequestException, get_images, "*"*22)
-        images = get_images("xbK9YuuJe1GMpPPMqGFocA")
+    def test_get_tiles(self) -> None:
+        self.assertRaises(rq.RequestException, get_tiles, "x"*22)
+        images = get_tiles("xbK9YuuJe1GMpPPMqGFocA")
         images[0][0]
-        images = get_images(
+        images = get_tiles(
             "xbK9YuuJe1GMpPPMqGFocA",
             PanoramaSettings(zoom=5, top_left=(10, 10), bottom_right=(13, 14)))
         count = sum(map(len, images))
         self.assertEqual(count, 12)
-        images = get_images(
+        images = get_tiles(
             "xbK9YuuJe1GMpPPMqGFocA",
             PanoramaSettings(zoom=5, top_left=(8, 10), bottom_right=(9, 13)),
             use_async=False)
         count = sum(map(len, images))
         self.assertEqual(count, 3)
 
-    def test_get_pil_images(self) -> None:
-        images = get_pil_images("xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(2))
+    def test_get_pil_tiles(self) -> None:
+        images = get_pil_tiles("xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(2))
         for row in images:
             for tile in row:
                 self.assertIsInstance(tile, Image.Image)
     
-    def test_get_image(self) -> None:
+    def test_get_panorama(self) -> None:
         self.assertRaises(
-            ValueError, get_image,
+            ValueError, get_panorama,
             "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=5))
-        self.assertIsInstance(get_image("xbK9YuuJe1GMpPPMqGFocA"), bytes)
-        get_image("xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=2))
-        get_image(
+        self.assertIsInstance(get_panorama("xbK9YuuJe1GMpPPMqGFocA"), bytes)
+        get_panorama("xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=2))
+        get_panorama(
             "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(3, top_left=(1, 1)))
-        get_image(
+        get_panorama(
             "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(5, top_left=(28, 12)))
     
-    def test_get_pil_image(self) -> None:
+    def test_get_pil_panorama(self) -> None:
         self.assertIsInstance(
-            get_pil_image("xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=1)),
+            get_pil_panorama(
+                "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=1)),
             Image.Image)
 
 
