@@ -1,1 +1,3 @@
 **/__pycache__
+testing/test_outputs/
+*.so

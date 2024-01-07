@@ -59,7 +59,8 @@ class Test_panorama_id(unittest.TestCase):
             ValueError, get_panorama,
             "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=5))
         self.assertIsInstance(get_panorama("xbK9YuuJe1GMpPPMqGFocA"), bytes)
-        get_panorama("xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=2))
+        get_panorama(
+            "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=2), use_async=False)
         get_panorama(
             "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(3, top_left=(1, 1)))
         get_panorama(
@@ -70,6 +71,16 @@ class Test_panorama_id(unittest.TestCase):
             get_pil_panorama(
                 "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=1)),
             Image.Image)
+        image = get_pil_panorama(
+            "gNh-lU0ZJwnavInqHhyVXQ", PanoramaSettings(zoom=0))
+        self.assertEqual(image.size, (512, 256))
+        image = get_pil_panorama(
+            "gNh-lU0ZJwnavInqHhyVXQ", PanoramaSettings(zoom=0),
+            crop_black_edges=False)
+        self.assertEqual(image.size, (512, 512))
+        image = get_pil_panorama(
+            "p39OM3EDkq3Xpfhv92fPuQ", PanoramaSettings(zoom=1))
+        self.assertEqual(image.size, (1024, 417))
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ TILE_HEIGHT = 512
 
 
 def get_max_coordinates(zoom: int) -> tuple[int, int]:
-    """Returns the maximum (bottom right) coordinates for a given zoom."""
+    """Returns the maximum (bottom right) tile coordinates for a given zoom."""
     return (2 ** zoom, max(1, 2 ** (zoom - 1)))
 
 
@@ -213,9 +213,8 @@ def get_tiles(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> list[list[bytes]]:
     """
-    Returns a 2D list of images in bytes,
-    where each element is one tile at one (x, y) coordinate, as defined
-    in the settings.
+    Returns a 2D list of images in bytes, where each element is
+    one tile at one (x, y) coordinate, as defined in the settings.
     If settings are not provided, use the default settings.
     If use_async is set to True, then speed up image downloads using
     asynchronous processing. Otherwise, use standard, serial requests.
@@ -229,36 +228,37 @@ def get_tiles(
         images = [[None] * settings.width for _ in range(settings.height)]
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(_get_async_images(images, panorama_id, settings))
-    else:
-        images = []
-        for y in range(settings.top_left[1], settings.bottom_right[1]):
-            image_row = []
-            for x in range(settings.top_left[0], settings.bottom_right[0]):
-                params = {
-                    "cb_client": "maps_sv.tactile", "panoid": panorama_id,
-                    "x": x, "y": y, "zoom": settings.zoom
-                }
-                retries = MAX_RETRIES
-                while True:
-                    try:
-                        response = rq.get(PANORAMA_DOWNLOAD_API, params)
-                        match response.status_code:
-                            case 200:
-                                image_data = response.content
-                                image_row.append(image_data)
-                                break
-                            case 400:
-                                raise rq.RequestException("400 - Bad Request")
-                            case _:
-                                raise rq.RequestException(
-                                    f"{response.status_code} "
-                                    "- something went wrong.")
-                    except Exception as e:
-                        if not retries:
-                            raise e
-                        time.sleep(1)
-                    retries -= 1
-            images.append(image_row)
+        return images
+    # Serial requests.
+    images = []
+    for y in range(settings.top_left[1], settings.bottom_right[1]):
+        image_row = []
+        for x in range(settings.top_left[0], settings.bottom_right[0]):
+            params = {
+                "cb_client": "maps_sv.tactile", "panoid": panorama_id,
+                "x": x, "y": y, "zoom": settings.zoom
+            }
+            retries = MAX_RETRIES
+            while True:
+                try:
+                    response = rq.get(PANORAMA_DOWNLOAD_API, params)
+                    match response.status_code:
+                        case 200:
+                            image_data = response.content
+                            image_row.append(image_data)
+                            break
+                        case 400:
+                            raise rq.RequestException("400 - Bad Request")
+                        case _:
+                            raise rq.RequestException(
+                                f"{response.status_code} "
+                                "- something went wrong.")
+                except Exception as e:
+                    if not retries:
+                        raise e
+                    time.sleep(1)
+                retries -= 1
+        images.append(image_row)
     return images
 
 
@@ -275,13 +275,15 @@ def get_pil_tiles(
 
 
 def get_pil_panorama(
-    panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
+    panorama_id: str, settings: PanoramaSettings = None,
+    use_async: bool = True, crop_black_edges: bool = True,
 ) -> Image.Image:
     """
     Downloads all required tiles of a panorama,
     and then merges the tiles together, returning a single PIL Image.
     The maximum width is 16 tiles, the maximum height is 8 tiles
     (entire zoom <= 4 possible, partial zoom = 5 possible).
+    By default, also remove black edges seen in some panoramas.
     """
     if settings is None:
         settings = PanoramaSettings()
@@ -290,9 +292,6 @@ def get_pil_panorama(
             f"A full image can only be up to {MAX_TILES_WIDTH} tiles in width "
             f"and {MAX_TILES_HEIGHT} tiles in height.")
     tiles = get_tiles(panorama_id, settings, use_async)
-    if settings.zoom == 0:
-        # Only one tile - return it.
-        return Image.open(io.BytesIO(tiles[0][0]))
     # Concatenates rows into single images and then
     # concatenates the rows into a single image.
     rows = []
@@ -304,22 +303,39 @@ def get_pil_panorama(
                 tile, (TILE_WIDTH * i, 0, TILE_WIDTH * (i+1), TILE_HEIGHT))
         rows.append(row_image)
     width, _ = rows[0].size
-    image = Image.new("RGB", (width, TILE_HEIGHT * len(rows)))
+    height = TILE_HEIGHT * len(rows)
+    image = Image.new("RGB", (width, height))
     for i, row in enumerate(rows):
         image.paste(row, (0, TILE_HEIGHT * i, width, TILE_HEIGHT * (i+1)))
-    return image
+    if not crop_black_edges:
+        return image
+    # Checks for bottom/right black edges and crops if necessary.
+    pixels = image.load()
+    for y in range(height - 1, -1, -1):
+        if any(any(pixels[x_, y]) for x_ in range(width)):
+            break
+    for x in range(width - 1, -1, -1):
+        if any(any(pixels[x, y_]) for y_ in range(height)):
+            break
+    if x == width - 1 and y == height - 1:
+        return image
+    crop_box = (0, 0, x + 1, y + 1)
+    return image.crop(crop_box)
 
 
 def get_panorama(
-    panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
+    panorama_id: str, settings: PanoramaSettings = None,
+    use_async: bool = True, crop_black_edges = True
 ) -> bytes:
     """
     Downloads all required tiles of a panorama and returns the image
     with the merged tiles, in bytes.
     The maximum width is 16 tiles, the maximum height is 8 tiles
     (entire zoom <= 4 possible, partial zoom = 5 possible).
+    By default, also remove black edges seen in some panoramas.
     """
-    image = get_pil_panorama(panorama_id, settings, use_async)
+    image = get_pil_panorama(
+        panorama_id, settings, use_async, crop_black_edges)
     with io.BytesIO() as f:
         image.save(f, format="jpeg")
         return f.getvalue()

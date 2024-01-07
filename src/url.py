@@ -1,45 +1,54 @@
 """
 This module allows the user to input a valid Google Street View
 URL (the full one, not a shorthand), set an image size, and
-the code downloads the relevant panorama tiles and renders
-an image to replicate the angle and zoom of the one represented
+the code downloads the relevant file using a hidden thumbnail API
+replicating the angle and zoom of the image represented
 by the URL, which would be roughly seen on the web app.
+This includes handling pitch, yaw and zoom correctly.
 """
+import io
+import time
 from dataclasses import dataclass
+
+import requests as rq
 from PIL import Image
 
 from panorama_id import validate_panorama_id
 
 
+THUMBNAIL_API = "https://geo0.ggpht.com/cbk"
+MAX_RETRIES = 2
+
 MIN_WIDTH = 32
 MIN_HEIGHT = 16
-DEFAULT_WIDTH = 1280
-DEFAULT_HEIGHT = 720
+DEFAULT_WIDTH = 768
+DEFAULT_HEIGHT = 768
 MAX_WIDTH = 2048
 MAX_HEIGHT = 2048
 MIN_LATITUDE = -90
 MAX_LATITUDE = 90
 MIN_LONGITUDE = -180
 MAX_LONGITUDE = 180
-MIN_ZOOM = 15
-MAX_ZOOM = 90
-MIN_HORIZONTAL_PAN = 0
-MAX_HORIZONTAL_PAN = 359.999999999
-MIN_VERTICAL_PAN = 1
-MAX_VERTICAL_PAN = 179
+MIN_FOV = 15
+MAX_FOV = 90
+MIN_YAW = 0
+DEFAULT_YAW = 0
+MAX_YAW = 359.999999999
+MIN_PITCH = 1
+MAX_PITCH = 179
+URL_SUFFIXES = set("ayht")
 
 
 @dataclass
 class StreetViewURL:
-    """Relevant street view URL information as required by the program."""
+    """Relevant parsed street view URL information."""
     latitude: float
     longitude: float
-    # A value of the zoom as seen in the URL, between 15 and 90.
-    # The larger is value, the smaller the zoom.
-    zoom: float
-    # Horizontal/vertical pan in degrees.
-    horizontal_pan: float
-    vertical_pan: float
+    # A value of the FOV as seen in the URL, between 15 and 90.
+    fov: float
+    # Horizontal/vertical offset in degrees.
+    yaw: float
+    pitch: float
     # Corresponding panorama ID embedded in the URL.
     panorama_id: str
 
@@ -63,7 +72,7 @@ def parse_url(url: str) -> StreetViewURL:
     Key Points:
     - Valid Google domain followed by /maps/
     - Valid latitude and longitude
-    - Valid a, y, h, t values in the URL.
+    - Valid a, y, h, t values in the URL (h can be omitted, 0 by default).
     - Panorama ID is followed by '1s' and must be deducible and valid.
     - Ignore other data, including query parameters.
     """
@@ -89,7 +98,7 @@ def parse_url(url: str) -> StreetViewURL:
     position = position.removeprefix("@")
     # Get all position information, raising an error if anything is wrong.
     try:
-        latitude, longitude, a, y, h, t = position.split(",")
+        latitude, longitude, *parameters = position.split(",")
     except ValueError:
         raise ValueError("Invalid URL.")
     try:
@@ -102,26 +111,33 @@ def parse_url(url: str) -> StreetViewURL:
         assert MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
     except Exception:
         raise ValueError("Invalid longitude.")
-    if a != "3a":
-        raise ValueError("Invalid 'a' value.")
-    try:
-        assert y.endswith("y")
-        zoom = float(y.removesuffix("y"))
-        assert MIN_ZOOM <= zoom <= MAX_ZOOM
-    except Exception:
-        raise ValueError("Invalid 'y' value.")
-    try:
-        assert h.endswith("h")
-        horizontal_pan = float(h.removesuffix("h"))
-        assert MIN_HORIZONTAL_PAN <= horizontal_pan <= MAX_HORIZONTAL_PAN
-    except Exception:
-        raise ValueError("Invalid 'h' value.")
-    try:
-        assert t.endswith("t")
-        vertical_pan = float(t.removesuffix("t"))
-        assert MIN_VERTICAL_PAN <= vertical_pan <= MAX_VERTICAL_PAN
-    except Exception:
-        raise ValueError("Invalid 't' value.")
+    suffixes = URL_SUFFIXES.copy()
+    for parameter in parameters:
+        for suffix in URL_SUFFIXES:
+            if parameter.endswith(suffix):
+                if suffix not in suffixes:
+                    raise ValueError(f"Invalid URL.")
+                try:
+                    match suffix:
+                        case "a":
+                            assert parameter in ("2a", "3a")
+                        case "y":
+                            fov = float(parameter.removesuffix("y"))
+                            assert MIN_FOV <= fov <= MAX_FOV
+                        case "h":
+                            yaw = float(parameter.removesuffix("h"))
+                            assert MIN_YAW <= yaw <= MAX_YAW
+                        case "t":
+                            pitch = float(parameter.removesuffix("t"))
+                            assert MIN_PITCH <= pitch <= MAX_PITCH
+                except Exception:
+                    raise ValueError(f"Invalid '{suffix}' value.")
+                suffixes.remove(suffix)
+                break
+    for remaining_suffix in suffixes:
+        if remaining_suffix != "h":
+            raise ValueError(f"Missing '{remaining_suffix}' value")
+        yaw = DEFAULT_YAW
     # Finally, extract panorama ID, validate and return.
     if not parts[-1].startswith("data="):
         raise ValueError("Invalid URL.")
@@ -133,19 +149,56 @@ def parse_url(url: str) -> StreetViewURL:
         raise ValueError("Invalid data string.")
     panorama_id = panorama_id_part.removeprefix("1s")
     validate_panorama_id(panorama_id)
-    return StreetViewURL(
-        latitude, longitude, zoom, horizontal_pan, vertical_pan, panorama_id)
-    
+    return StreetViewURL(latitude, longitude, fov, yaw, pitch, panorama_id)
+
 
 def get_pil_image(
-    url: str, width: int = DEFAULT_WIDTH, height = DEFAULT_HEIGHT
+    url: str, width: int = DEFAULT_WIDTH, height = DEFAULT_HEIGHT,
 ) -> Image.Image:
     """
-    Takes a Google Street View URL and renders an image with a
+    Takes a Google Street View URL and returns a PIL Image with a
     given width and height, with the correct zoom and angle.
-    This is achieved by downloading the relevant panorama tiles
-    and rendering them correctly from there on in.
     """
     validate_dimensions(width, height)
     url_info = parse_url(url)
-    # TODO
+    params = {
+        "cb_client": "maps_sv.tactile", "output": "thumbnail",
+        "panoid": url_info.panorama_id, "w": width, "h": height,
+        # Pitch (vertical) [-90, 90] where positive is downwards.
+        "yaw": url_info.yaw, "pitch": -(url_info.pitch - 90),
+        "thumbfov": round(url_info.fov) # Must be integer,
+    }
+    retries = MAX_RETRIES
+    while True:
+        try:
+            response = rq.get(THUMBNAIL_API, params=params)
+            match response.status_code:
+                case 200:
+                    image = Image.open(io.BytesIO(response.content))
+                    if image.size == (width, height):
+                        return image
+                    return image.resize((width, height))
+                case 400:
+                    raise rq.RequestException("400 - Bad Request")
+                case _:
+                    raise rq.RequestException(
+                        f"{response.status_code} - something went wrong.")
+        except Exception as e:
+            if not retries:
+                raise e
+            time.sleep(1)
+        retries -= 1
+
+
+def get_image(
+    url: str, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
+) -> bytes:
+    """
+    Takes a valid Google Street View URL and returns the image bytes
+    representing the display rendered at the given URL, based on
+    the camera yaw, pitch and zoom.
+    """
+    image = get_pil_image(url, width, height)
+    with io.BytesIO() as f:
+        image.save(f, format="jpeg")
+        return f.getvalue()
