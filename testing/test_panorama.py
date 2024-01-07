@@ -1,11 +1,11 @@
-"""Unit Tests the panorama_id.py module."""
+"""Unit Tests the panorama.py module."""
 import unittest
 
 import __init__
-from panorama_id import *
+from panorama import *
 
 
-class Test_panorama_id(unittest.TestCase):
+class Test_panorama(unittest.TestCase):
 
     def test_validate_coordinates(self) -> None:
         self.assertRaises(TypeError, validate_coordinates, ("abc", "def"))

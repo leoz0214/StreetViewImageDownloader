@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import requests as rq
 from PIL import Image
 
-from panorama_id import validate_panorama_id
+from panorama import validate_panorama_id
 
 
 THUMBNAIL_API = "https://geo0.ggpht.com/cbk"
