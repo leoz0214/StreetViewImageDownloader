@@ -2,7 +2,7 @@ import pathlib
 import sys
 
 
-sys.path.append(str(pathlib.Path(__file__).parent.parent / "src"))
+sys.path.append(str(pathlib.Path(__file__).parent.parent / "src" / "api"))
 
 
 TEST_OUTPUT_FOLDER = pathlib.Path(__file__).parent / "test_outputs"

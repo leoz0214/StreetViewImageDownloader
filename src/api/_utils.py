@@ -1,4 +1,4 @@
-"""Private Utility functions for the program."""
+"""Private Utility functions for the API."""
 
 
 def _split_array(array: list, parts: int) -> list[list]:

@@ -2,7 +2,7 @@
 import unittest
 
 import __init__
-from utils import _split_array
+from _utils import _split_array
 
 
 class Test_utils(unittest.TestCase):
