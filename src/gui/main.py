@@ -2,6 +2,7 @@
 import tkinter as tk
 
 import __init__
+import panorama_id
 from _utils import inter, BUTTON_COLOURS
 
 
@@ -20,7 +21,8 @@ class MainMenu(tk.Frame):
             self, font=inter(40, True), text="Street View Image Downloader")
         self.panorama_id_button = tk.Button(
             self, font=inter(20),
-            text="By Panorama ID", width=20, **BUTTON_COLOURS)
+            text="By Panorama ID", width=20, **BUTTON_COLOURS,
+            command=self.panorama_id)
         self.url_button = tk.Button(
             self, font=inter(20), 
             text="By URL", width=20, **BUTTON_COLOURS)
@@ -36,6 +38,11 @@ class MainMenu(tk.Frame):
         self.url_button.pack(pady=5)
         self.batch_button.pack(pady=5)
         self.view_panorama_button.pack(pady=5)
+    
+    def panorama_id(self) -> None:
+        """Proceeds to downloading panoramas by ID."""
+        self.destroy()
+        panorama_id.PanoramaDownload(self.root).pack()
 
 
 def main() -> None:

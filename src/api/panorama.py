@@ -14,7 +14,10 @@ import aiohttp
 import requests as rq
 from PIL import Image
 
-from _utils import _split_array
+try:
+    from api._utils import _split_array
+except ImportError:
+    from _utils import _split_array
 
 
 MIN_ZOOM = 0
