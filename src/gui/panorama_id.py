@@ -1,18 +1,24 @@
 """Panorama ID downloading section of the GUI."""
+import math
 import tkinter as tk
 
 import main
-from _utils import inter, RED, GREEN, BLUE, GREY, BLACK,  draw_circle
+from _utils import (
+    inter, RED, GREEN, BLUE, GREY, BLACK, DARK_BLUE, draw_circle,
+    BUTTON_COLOURS, bool_to_state)
 from api.panorama import (
     PANORAMA_CHARACTERS, PANORAMA_ID_LENGTH, MIN_ZOOM, MAX_ZOOM,
     get_max_coordinates)
 
 
 CANVAS_CIRCLE_RADIUS = 12
-CANVAS_WIDTH = 1024
-CANVAS_HEIGHT = 512
-TOTAL_CANVAS_WIDTH = CANVAS_WIDTH + CANVAS_CIRCLE_RADIUS * 2
-TOTAL_CANVAS_HEIGHT = CANVAS_HEIGHT + CANVAS_CIRCLE_RADIUS * 2
+CANVAS_DIMENSIONS_BY_ZOOM = {
+    1: (256, 128),
+    2: (512, 256),
+    3: (512, 256),
+    4: (1024, 512),
+    5: (1024, 512)
+}
 
 
 class PanoramaDownload(tk.Frame):
@@ -24,13 +30,37 @@ class PanoramaDownload(tk.Frame):
         self.root.title(f"{main.TITLE} - Panorama Download")
 
         self.title = tk.Label(
-            self, font=inter(40, True), text="Panorama Download")
+            self, font=inter(25, True), text="Panorama Download")
         self.panorama_id_input = PanoramaIDInput(self)
         self.settings_input = PanoramaSettingsInput(self)
+        self.back_button = tk.Button(
+            self, font=inter(20), text="Back", width=15, command=self.back,
+            **BUTTON_COLOURS)
+        self.download_button = tk.Button(
+            self, font=inter(20), text="Download", width=15,
+            command=self.download, **BUTTON_COLOURS, state="disabled")
         
-        self.title.pack(padx=10, pady=10)
-        self.panorama_id_input.pack(padx=10, pady=5)
-        self.settings_input.pack(padx=10, pady=5)
+        self.title.grid(row=0, column=0, columnspan=2, padx=10, pady=5)
+        self.panorama_id_input.grid(
+            row=1, column=0, columnspan=2, padx=10, pady=3)
+        self.settings_input.grid(
+            row=2, column=0, columnspan=2, padx=10, pady=3)
+        self.back_button.grid(row=3, column=0, padx=10, pady=3)
+        self.download_button.grid(row=3, column=1, padx=10, pady=3)
+    
+    def back(self) -> None:
+        """Returns to the main menu."""
+        self.destroy()
+        main.MainMenu(self.root).pack()
+    
+    def update_download_button_state(self) -> None:
+        """Updates download button state based on valid input or not."""
+        self.download_button.config(
+            state=bool_to_state(self.panorama_id_input.valid))
+    
+    def download(self) -> None:
+        """Downloads the required image (in a thread to avoid freezing)."""
+        # TODO
 
 
 class PanoramaIDInput(tk.Frame):
@@ -38,15 +68,15 @@ class PanoramaIDInput(tk.Frame):
 
     def __init__(self, master: PanoramaDownload) -> None:
         super().__init__(master)
-        self.label = tk.Label(self, font=inter(25), text="Panorama ID:")
+        self.label = tk.Label(self, font=inter(20), text="Panorama ID:")
         self._panorama_id = tk.StringVar()
         self._previous = ""
         self.valid = False
         self._panorama_id.trace_add("write", lambda *_: self.validate())
         self.input = tk.Entry(
-            self, font=inter(25), width=25, textvariable=self._panorama_id)
+            self, font=inter(20), width=25, textvariable=self._panorama_id)
         self.feedback_label = tk.Label(
-            self, font=inter(11), fg=RED,
+            self, font=inter(8), fg=RED,
             text=f"Missing characters: {PANORAMA_ID_LENGTH}")
 
         self.label.grid(row=0, column=0, rowspan=2, padx=5, sticky="n")
@@ -60,7 +90,6 @@ class PanoramaIDInput(tk.Frame):
     def validate(self) -> None:
         """Validates the updated panorama ID."""
         new = self._panorama_id.get()
-        self.valid = False
         if (
             len(new) > PANORAMA_ID_LENGTH
             or any(char not in PANORAMA_CHARACTERS for char in new)
@@ -70,11 +99,13 @@ class PanoramaIDInput(tk.Frame):
             self._previous = new
             missing_characters = PANORAMA_ID_LENGTH - len(new)
             if missing_characters:
+                self.valid = False
                 self.feedback_label.config(
                     text=f"Missing characters: {missing_characters}", fg=RED)
             else:
                 self.valid = True
                 self.feedback_label.config(text="Valid panorama ID", fg=GREEN)
+        self.master.update_download_button_state()
 
 
 class PanoramaSettingsInput(tk.Frame):
@@ -86,17 +117,29 @@ class PanoramaSettingsInput(tk.Frame):
         super().__init__(master)
         self.zoom_label = tk.Label(self, font=inter(20), text="Zoom:")
         self.zoom_scale = tk.Scale(
-            self, orient=tk.HORIZONTAL, font=inter(20), length=600,
-            sliderlength=100, width=40, from_=MIN_ZOOM, to=MAX_ZOOM)
-        self.range_input = PanoramaRangeInput(self, self.zoom)
+            self, orient=tk.HORIZONTAL, font=inter(12), length=600,
+            sliderlength=100, width=30, from_=MIN_ZOOM, to=MAX_ZOOM,
+            command=lambda *_: self.update_zoom())
+        self.range_inputs = [
+            PanoramaRangeInput(self, zoom)
+            for zoom in range(MIN_ZOOM, MAX_ZOOM + 1)
+        ]
+        self.range_input = None
+        self.update_zoom()
         
-        self.zoom_label.grid(row=0, column=0, padx=5, sticky="n")
-        self.zoom_scale.grid(row=0, column=1, padx=5)
-        self.range_input.grid(row=1, column=0, columnspan=2, pady=5)
+        self.zoom_label.grid(row=0, column=0, padx=10, sticky="ne")
+        self.zoom_scale.grid(row=0, column=1, padx=10, sticky="w")
     
     @property
     def zoom(self) -> int:
         return self.zoom_scale.get()
+    
+    def update_zoom(self) -> None:
+        """Zoom update - update range input display."""
+        if self.range_input is not None:
+            self.range_input.grid_forget()
+        self.range_input = self.range_inputs[self.zoom]
+        self.range_input.grid(row=1, column=0, columnspan=2, pady=5)
     
 
 class PanoramaRangeInput(tk.Frame):
@@ -106,36 +149,174 @@ class PanoramaRangeInput(tk.Frame):
     """
 
     def __init__(self, master: PanoramaSettingsInput, zoom: int) -> None:
-        super().__init__(master)
+        super().__init__(master, width=1200, height=600)
+        self.pack_propagate(False)
         self.zoom = zoom
         self.max_x, self.max_y = get_max_coordinates(self.zoom)
+        self.info_label = tk.Label(self, font=inter(12))
+        if self.zoom == 0:
+            # Only one tile - no point in additional settings.
+            self.info_label.config(
+                text="The entire panorama will be downloaded.",
+                font=inter(25))
+            self.info_label.place(relx=0.5, rely=0.5, anchor="center")
+            return
+        self.width, self.height = CANVAS_DIMENSIONS_BY_ZOOM[self.zoom]
+        self.total_width = self.width + CANVAS_CIRCLE_RADIUS * 2
+        self.total_height = self.height + CANVAS_CIRCLE_RADIUS * 2
         self.canvas = tk.Canvas(
-            self, width=TOTAL_CANVAS_WIDTH, height=TOTAL_CANVAS_HEIGHT)
-        self.circle_coordinates = (
-            [CANVAS_CIRCLE_RADIUS, CANVAS_CIRCLE_RADIUS],
-            [TOTAL_CANVAS_WIDTH - CANVAS_CIRCLE_RADIUS,
-                TOTAL_CANVAS_HEIGHT - CANVAS_CIRCLE_RADIUS]
-        )
+            self, width=self.total_width, height=self.total_height)
+        
+        self.circle_coordinates = [
+            (CANVAS_CIRCLE_RADIUS, CANVAS_CIRCLE_RADIUS),
+            (self.total_width - CANVAS_CIRCLE_RADIUS,
+                self.total_height - CANVAS_CIRCLE_RADIUS)
+        ]
         self.canvas.create_rectangle(
             *self.circle_coordinates[0], *self.circle_coordinates[1],
             fill=GREY)
-        
-        # Draw grid lines.
-        for x in range(self.max_x + 1):
-            canvas_x = CANVAS_WIDTH * x // self.max_x + CANVAS_CIRCLE_RADIUS
-            self.canvas.create_line(
-                canvas_x, CANVAS_CIRCLE_RADIUS,
-                canvas_x, TOTAL_CANVAS_HEIGHT - CANVAS_CIRCLE_RADIUS,
-                fill=BLACK)
-        for y in range(self.max_y + 1):
-            canvas_y = CANVAS_HEIGHT * y // self.max_y + CANVAS_CIRCLE_RADIUS
-            self.canvas.create_line(
-                CANVAS_CIRCLE_RADIUS, canvas_y,
-                TOTAL_CANVAS_WIDTH - CANVAS_CIRCLE_RADIUS, canvas_y,
-                fill=BLACK)
 
+        self.circles = []
+        self.selected_circle = None
+        self.previous_circle_coordinates = None
+        self.lines = []
+        self.selected_area = None
+
+        self.top_left = (0, 0)
+        self.bottom_right = (self.max_x, self.max_y)
+
+        self.draw()
+
+        self.canvas.bind("<Motion>", self.motion)
+        self.canvas.bind("<Leave>", lambda *_: self.draw())
+        self.canvas.bind("<B1-Motion>", self.drag)
+        self.canvas.bind("<ButtonRelease-1>", lambda *_: self.drop())
+
+        self.update_info()
+        
+        self.canvas.pack(padx=5, pady=5)
+        self.info_label.pack(padx=5, pady=5)
+    
+    def draw_grid_lines(self) -> None:
+        """Draws the grid lines separating the tiles."""
+        for line in self.lines:
+            self.canvas.delete(line)
+        self.lines.clear()
+        for x in range(self.max_x + 1):
+            canvas_x = self.width * x // self.max_x + CANVAS_CIRCLE_RADIUS
+            line = self.canvas.create_line(
+                canvas_x, CANVAS_CIRCLE_RADIUS,
+                canvas_x, self.total_height - CANVAS_CIRCLE_RADIUS, fill=BLACK)
+            self.lines.append(line)
+        for y in range(self.max_y + 1):
+            canvas_y = self.height * y // self.max_y + CANVAS_CIRCLE_RADIUS
+            line = self.canvas.create_line(
+                CANVAS_CIRCLE_RADIUS, canvas_y,
+                self.total_width - CANVAS_CIRCLE_RADIUS, canvas_y, fill=BLACK)
+            self.lines.append(line)
+    
+    def draw(self) -> None:
+        """Draws circles, selected area and grid lines."""
+        for circle in self.circles:
+            self.canvas.delete(circle)
+        self.circles.clear()
+        self.draw_selected_area()
+        self.draw_grid_lines()
         for coordinates in self.circle_coordinates:
-            draw_circle(
+            circle = draw_circle(
                 self.canvas, *coordinates, CANVAS_CIRCLE_RADIUS, fill=BLUE)
-            
-        self.canvas.pack()
+            self.circles.append(circle)
+    
+    def draw_selected_area(self) -> None:
+        """Draws green rectangle representing the selected area."""
+        if self.selected_area is not None:
+            self.canvas.delete(self.selected_area)
+        top_left = (
+            min(self.circle_coordinates[0][0], self.circle_coordinates[1][0]),
+            min(self.circle_coordinates[0][1], self.circle_coordinates[1][1]))
+        bottom_right = (
+            max(self.circle_coordinates[0][0], self.circle_coordinates[1][0]),
+            max(self.circle_coordinates[0][1], self.circle_coordinates[1][1]))   
+        self.selected_area = self.canvas.create_rectangle(
+            *top_left, *bottom_right, fill=GREEN)
+        # Tile top left and bottom right
+        self.top_left = (
+            (top_left[0] - CANVAS_CIRCLE_RADIUS) * self.max_x // self.width,
+            (top_left[1] - CANVAS_CIRCLE_RADIUS) * self.max_y // self.height)
+        self.bottom_right = (
+            (bottom_right[0] - CANVAS_CIRCLE_RADIUS)
+                * self.max_x // self.width,
+            (bottom_right[1] - CANVAS_CIRCLE_RADIUS)
+                * self.max_y // self.height)
+    
+    def motion(self, event: tk.Event) -> None:
+        """Mouse movement over canvas."""
+        x, y = event.x, event.y
+        self.draw()
+        for i, coordinates in enumerate(self.circle_coordinates):
+            if (
+                math.hypot(x - coordinates[0], y - coordinates[1])
+                < CANVAS_CIRCLE_RADIUS
+            ):
+                # Circle being hovered over currently.
+                self.canvas.delete(self.circles[i])
+                circle = draw_circle(
+                    self.canvas, *coordinates,
+                    CANVAS_CIRCLE_RADIUS, fill=DARK_BLUE)
+                self.circles[i] = circle
+                self.selected_circle = i
+                break
+    
+    def drag(self, event: tk.Event) -> None:
+        """Dragging a circle to adjust its position."""
+        if self.selected_circle is None:
+            return
+        if self.previous_circle_coordinates is None:
+            self.previous_circle_coordinates = self.circle_coordinates.copy()
+        x, y = event.x, event.y
+        x = min(
+            max(x, CANVAS_CIRCLE_RADIUS),
+            self.total_width - CANVAS_CIRCLE_RADIUS)
+        y = min(
+            max(y, CANVAS_CIRCLE_RADIUS),
+            self.total_height - CANVAS_CIRCLE_RADIUS)
+        self.circle_coordinates[self.selected_circle] = (x, y)
+        self.draw()
+        self.info_label.config(text="Dragging...")
+    
+    def drop(self) -> None:
+        """No longer dragging a circle."""
+        if self.selected_circle is None:
+            return
+        rounded_coordinates = []
+        for coordinates in self.circle_coordinates:
+            x, y = coordinates
+            x = CANVAS_CIRCLE_RADIUS + self.width * round(
+                (x - CANVAS_CIRCLE_RADIUS) / self.width * self.max_x
+            ) // self.max_x
+            y = CANVAS_CIRCLE_RADIUS + self.height * round(
+                (y - CANVAS_CIRCLE_RADIUS) / self.height * self.max_y
+            ) // self.max_y
+            rounded_coordinates.append((x, y))
+        if any(
+            rounded_coordinates[0][i] == rounded_coordinates[1][i]
+            for i in range(2)
+        ):
+            self.circle_coordinates = self.previous_circle_coordinates
+        else:
+            self.circle_coordinates = rounded_coordinates
+        self.draw()
+        
+        self.selected_circle = None
+        self.previous_circle_coordinates = None
+        self.update_info()
+    
+    def update_info(self) -> None:
+        """Updates information on selection."""
+        width = self.bottom_right[0] - self.top_left[0]
+        height = self.bottom_right[1] - self.top_left[1]
+        text = " | ".join((
+            f"Top left: {self.top_left}", f"Bottom right: {self.bottom_right}",
+            f"Width: {width}", f"Height: {height}", f"Tiles: {width * height}"
+        ))
+        self.info_label.config(text=text)

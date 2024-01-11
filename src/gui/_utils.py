@@ -13,6 +13,7 @@ pyglet.font.add_file(str(BIN_FOLDER / "Inter.ttf"))
 RED = "#ff0000"
 GREEN = "green"
 BLUE = "#0096ff"
+DARK_BLUE = "#0000ff"
 GREY = "#cccccc"
 BLACK = "#000000"
 BUTTON_COLOURS = dict.fromkeys(("bg", "activebackground"), GREY)
@@ -30,7 +31,12 @@ def inter(size: int, bold: bool = False, italic: bool = False) -> tuple:
 
 def draw_circle(
     canvas: tk.Canvas, x: int, y: int, radius: int, fill: str
-) -> None:
+) -> int:
     """Utility to draw circle on canvas"""
-    canvas.create_oval(
+    return canvas.create_oval(
         x - radius, y - radius, x + radius, y + radius, fill=fill)
+
+
+def bool_to_state(expression: bool) -> str:
+    """Returns 'normal' if True, else 'disabled'"""
+    return "normal" if expression else "disabled"
