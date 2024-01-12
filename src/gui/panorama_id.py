@@ -1,14 +1,23 @@
 """Panorama ID downloading section of the GUI."""
+import asyncio
 import math
+import threading
+import time
 import tkinter as tk
+from tkinter import messagebox
+from tkinter import ttk
+
+from PIL import Image
 
 import main
+import save
 from _utils import (
     inter, RED, GREEN, BLUE, GREY, BLACK, DARK_BLUE, draw_circle,
     BUTTON_COLOURS, bool_to_state)
 from api.panorama import (
     PANORAMA_CHARACTERS, PANORAMA_ID_LENGTH, MIN_ZOOM, MAX_ZOOM,
-    get_max_coordinates)
+    get_max_coordinates, PanoramaSettings, _combine_tiles,
+    _get_async_images)
 
 
 CANVAS_CIRCLE_RADIUS = 12
@@ -19,6 +28,7 @@ CANVAS_DIMENSIONS_BY_ZOOM = {
     4: (1024, 512),
     5: (1024, 512)
 }
+DOWNLOAD_PROGRESS_REFRESH_RATE = 0.05
 
 
 class PanoramaDownload(tk.Frame):
@@ -60,7 +70,14 @@ class PanoramaDownload(tk.Frame):
     
     def download(self) -> None:
         """Downloads the required image (in a thread to avoid freezing)."""
-        # TODO
+        PanoramaDownloadToplevel(
+            self, self.panorama_id_input.panorama_id,
+            self.settings_input.settings)
+    
+    def save(self, panorama: Image.Image) -> None:
+        """Proceeds to the image saving screen."""
+        self.pack_forget()
+        save.SaveImageFrame(self.root, self, panorama).pack()
 
 
 class PanoramaIDInput(tk.Frame):
@@ -133,6 +150,14 @@ class PanoramaSettingsInput(tk.Frame):
     @property
     def zoom(self) -> int:
         return self.zoom_scale.get()
+    
+    @property
+    def settings(self) -> PanoramaSettings:
+        if self.zoom == 0:
+            return PanoramaSettings(self.zoom)
+        return PanoramaSettings(
+            self.zoom, self.range_input.top_left,
+            self.range_input.bottom_right)
     
     def update_zoom(self) -> None:
         """Zoom update - update range input display."""
@@ -320,3 +345,108 @@ class PanoramaRangeInput(tk.Frame):
             f"Width: {width}", f"Height: {height}", f"Tiles: {width * height}"
         ))
         self.info_label.config(text=text)
+
+
+class PanoramaDownloadToplevel(tk.Toplevel):
+    """
+    Toplevel window where the panorama downloading occurs
+    and progress is displayed.
+    """
+
+    def __init__(
+        self, master: PanoramaDownload, panorama_id: str,
+        settings: PanoramaSettings
+    ) -> None:
+        super().__init__(master)
+        self.title(f"{main.TITLE} - Downloading Panorama...")
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.panorama_id = panorama_id
+        self.settings = settings
+        self.cancelled = False
+        self.tiles = [
+            [None] * self.settings.width
+            for _ in range(self.settings.height)]
+        self.panorama = None
+        self.exception = None
+        self.async_loop = None
+        
+        self.title_label = tk.Label(
+            self, font=inter(25, True), text="Downloading Panorama...")
+        self.progress_bar = ttk.Progressbar(
+            self, length=500, maximum=self.settings.tiles)
+        self.progress_label = tk.Label(self, font=inter(12))
+        self.cancel_button = tk.Button(
+            self, font=inter(15), text="Cancel",width=15,
+            bg=RED, activebackground=RED, command=self.cancel)
+        
+        self.update_progress()
+        threading.Thread(target=self.download, daemon=True).start()
+    
+        self.title_label.pack(padx=25, pady=25)
+        self.progress_bar.pack(padx=25, pady=25)
+        self.progress_label.pack(padx=25, pady=25)
+        self.cancel_button.pack(padx=25, pady=25)
+    
+    @property
+    def tiles_downloaded(self) -> int:
+        return self.settings.tiles - sum(row.count(None) for row in self.tiles)
+    
+    def update_progress(self) -> None:
+        """Updates the progress bar and progress label."""
+        self.progress_bar.config(value=self.tiles_downloaded)
+        percentage = round(
+            self.tiles_downloaded / self.settings.tiles * 100, 1)
+        if percentage == 100:
+            text = "Merging Tiles..."
+        else:
+            text = " | ".join((
+                f"Tiles downloaded: {self.tiles_downloaded} / "
+                    f"{self.settings.tiles}",
+                f"Progress: {percentage}%"))
+        self.progress_label.config(text=text)
+    
+    def _process_download(self) -> None:
+        try:
+            asyncio.set_event_loop_policy(
+                asyncio.WindowsSelectorEventLoopPolicy())
+            asyncio.run(_get_async_images(
+                self.tiles, self.panorama_id, self.settings, self))
+            self.panorama = _combine_tiles(self.tiles, True, self)
+            if self.cancelled:
+                raise RuntimeError
+            if self.panorama.size == (0, 0):
+                raise RuntimeError("No panorama data.")
+        except Exception as e:
+            self.exception = e    
+    
+    def download(self) -> None:
+        """Method to download the image tiles as required."""
+        try:
+            threading.Thread(
+                target=self._process_download, daemon=True).start()
+            while self.panorama is None:
+                if self.exception is not None:
+                    raise self.exception
+                self.update_progress()
+                time.sleep(DOWNLOAD_PROGRESS_REFRESH_RATE)
+        except Exception as e:
+            if self.cancelled:
+                return
+            messagebox.showerror(
+                "Error", f"Unfortunately, an error has occurred: {e}",
+                parent=self)
+            self.destroy()
+        else:
+            self.save()
+    
+    def cancel(self) -> None:
+        """Cancels the panorama download."""
+        self.cancelled = True
+        self.destroy()
+    
+    def save(self) -> None:
+        """Proceeds to the save GUI."""
+        self.destroy()
+        self.master.save(self.panorama)
+        

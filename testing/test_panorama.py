@@ -55,9 +55,6 @@ class Test_panorama(unittest.TestCase):
                 self.assertIsInstance(tile, Image.Image)
     
     def test_get_panorama(self) -> None:
-        self.assertRaises(
-            ValueError, get_panorama,
-            "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=5))
         self.assertIsInstance(get_panorama("xbK9YuuJe1GMpPPMqGFocA"), bytes)
         get_panorama(
             "xbK9YuuJe1GMpPPMqGFocA", PanoramaSettings(zoom=2), use_async=False)

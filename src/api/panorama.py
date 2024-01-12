@@ -23,8 +23,6 @@ except ImportError:
 MIN_ZOOM = 0
 MAX_ZOOM = 5
 MIN_COORDINATES = (0, 0)
-MAX_TILES_WIDTH = 16
-MAX_TILES_HEIGHT = 8
 
 PANORAMA_CHARACTERS = f"{string.ascii_letters}{string.digits}-_"
 PANORAMA_ID_LENGTH = 22
@@ -166,7 +164,7 @@ def validate_panorama_id(panorama_id: str) -> None:
 
 async def _get_async_images_batch(
     array: list[list], batch: list[tuple], panorama_id: str,
-    settings: PanoramaSettings
+    settings: PanoramaSettings, gui
 ) -> None:
     min_x, min_y = settings.top_left
     async with aiohttp.ClientSession() as session:
@@ -177,6 +175,8 @@ async def _get_async_images_batch(
             }
             retries = MAX_RETRIES
             while True:
+                if gui is not None and gui.cancelled:
+                    raise RuntimeError
                 try:
                     async with session.get(
                         PANORAMA_DOWNLOAD_API, params=params
@@ -199,7 +199,8 @@ async def _get_async_images_batch(
     
 
 async def _get_async_images(
-    array: list[list], panorama_id: str, settings: PanoramaSettings
+    array: list[list], panorama_id: str, settings: PanoramaSettings,
+    gui = None
 ) -> None:
     # Splits required tiles into batches.
     batches = _split_array(
@@ -208,7 +209,7 @@ async def _get_async_images(
             range(settings.top_left[0], settings.bottom_right[0]))), 
         MAX_ASYNC_COROUTINES)
     await asyncio.gather(
-        *(_get_async_images_batch(array, batch, panorama_id, settings)
+        *(_get_async_images_batch(array, batch, panorama_id, settings, gui)
         for batch in batches))
 
 
@@ -277,30 +278,17 @@ def get_pil_tiles(
     return [[Image.open(io.BytesIO(tile)) for tile in row] for row in tiles]
 
 
-def get_pil_panorama(
-    panorama_id: str, settings: PanoramaSettings = None,
-    use_async: bool = True, crop_black_edges: bool = True,
+def _combine_tiles(
+    tiles: list[list[bytes]], crop_black_edges: bool, gui = None
 ) -> Image.Image:
-    """
-    Downloads all required tiles of a panorama,
-    and then merges the tiles together, returning a single PIL Image.
-    The maximum width is 16 tiles, the maximum height is 8 tiles
-    (entire zoom <= 4 possible, partial zoom = 5 possible).
-    By default, also remove black edges seen in some panoramas.
-    """
-    if settings is None:
-        settings = PanoramaSettings()
-    if settings.width > MAX_TILES_WIDTH or settings.height > MAX_TILES_HEIGHT:
-        raise ValueError(
-            f"A full image can only be up to {MAX_TILES_WIDTH} tiles in width "
-            f"and {MAX_TILES_HEIGHT} tiles in height.")
-    tiles = get_tiles(panorama_id, settings, use_async)
     # Concatenates rows into single images and then
     # concatenates the rows into a single image.
     rows = []
     for row in tiles:
         row_image = Image.new("RGB", (TILE_WIDTH * len(row), TILE_HEIGHT))
         for i, tile in enumerate(row):
+            if gui is not None and gui.cancelled:
+                raise RuntimeError
             tile = Image.open(io.BytesIO(tile))
             row_image.paste(
                 tile, (TILE_WIDTH * i, 0, TILE_WIDTH * (i+1), TILE_HEIGHT))
@@ -309,21 +297,41 @@ def get_pil_panorama(
     height = TILE_HEIGHT * len(rows)
     image = Image.new("RGB", (width, height))
     for i, row in enumerate(rows):
+        if gui is not None and gui.cancelled:
+            raise RuntimeError
         image.paste(row, (0, TILE_HEIGHT * i, width, TILE_HEIGHT * (i+1)))
     if not crop_black_edges:
         return image
     # Checks for bottom/right black edges and crops if necessary.
     pixels = image.load()
     for y in range(height - 1, -1, -1):
+        if gui is not None and gui.cancelled:
+            raise RuntimeError
         if any(any(pixels[x_, y]) for x_ in range(width)):
             break
     for x in range(width - 1, -1, -1):
+        if gui is not None and gui.cancelled:
+            raise RuntimeError
         if any(any(pixels[x, y_]) for y_ in range(height)):
             break
     if x == width - 1 and y == height - 1:
         return image
     crop_box = (0, 0, x + 1, y + 1)
     return image.crop(crop_box)
+    
+
+def get_pil_panorama(
+    panorama_id: str, settings: PanoramaSettings = None,
+    use_async: bool = True, crop_black_edges: bool = True,
+) -> Image.Image:
+    """
+    Downloads all required tiles of a panorama,
+    and then merges the tiles together, returning a single PIL Image.
+    """
+    if settings is None:
+        settings = PanoramaSettings()
+    tiles = get_tiles(panorama_id, settings, use_async)
+    return _combine_tiles(tiles, crop_black_edges)
 
 
 def get_panorama(
@@ -333,9 +341,6 @@ def get_panorama(
     """
     Downloads all required tiles of a panorama and returns the image
     with the merged tiles, in bytes.
-    The maximum width is 16 tiles, the maximum height is 8 tiles
-    (entire zoom <= 4 possible, partial zoom = 5 possible).
-    By default, also remove black edges seen in some panoramas.
     """
     image = get_pil_panorama(
         panorama_id, settings, use_async, crop_black_edges)
