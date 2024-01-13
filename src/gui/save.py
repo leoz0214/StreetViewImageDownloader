@@ -14,7 +14,7 @@ from _utils import inter, BUTTON_COLOURS
 
 # Minimum image dimensions to create a scrollbar for.
 MIN_SCROLLBAR_WIDTH = 1600
-MIN_SCROLLBAR_HEIGHT = 700
+MIN_SCROLLBAR_HEIGHT = 675
 
 
 class SaveImageFrame(tk.Frame):
@@ -26,6 +26,8 @@ class SaveImageFrame(tk.Frame):
         super().__init__(root)
         self.root = root
         self.root.title(f"{self.root.title()} - Save")
+        self.menu = SaveImageMenu(self)
+        self.root.config(menu=self.menu)
         self.previous_frame = previous
         self.image = image
         self.tk_image = ImageTk.PhotoImage(self.image)
@@ -48,6 +50,8 @@ class SaveImageFrame(tk.Frame):
         self.home_button = tk.Button(
             self, font=inter(20), text="Main Menu", width=15,
             **BUTTON_COLOURS, command=self.home)
+        
+        self.root.bind("<Control-s>", lambda *_: self.save())
 
         self.title.grid(row=0, column=0, columnspan=3, padx=10, pady=5)
         self.image_preview.grid(row=1, column=0, columnspan=3, padx=10, pady=5)
@@ -56,6 +60,12 @@ class SaveImageFrame(tk.Frame):
         self.retry_button.grid(row=3, column=0, padx=(50, 10), pady=5)
         self.save_button.grid(row=3, column=1, padx=10, pady=5)
         self.home_button.grid(row=3, column=2, padx=(10, 50), pady=5)
+
+    def destroy(self) -> None:
+        """Exits the save image screen."""
+        self.root.config(menu=None)
+        self.root.unbind("<Control-s>")
+        super().destroy()
     
     def retry(self) -> None:
         """Go back to the previous download screen."""
@@ -79,6 +89,21 @@ class SaveImageFrame(tk.Frame):
         """Returns to the main menu of the program."""
         self.destroy()
         main.MainMenu(self.root).pack()
+
+
+class SaveImageMenu(tk.Menu):
+    """Toplevel menu for the save image screen."""
+
+    def __init__(self, master: SaveImageFrame) -> None:
+        super().__init__(master)
+        self.file_menu = tk.Menu(self, tearoff=False)
+        self.file_menu.add_command(
+            label="Save (Ctrl+S)", font=inter(12), command=master.save)
+        self.file_menu.add_command(
+            label="Download Another", font=inter(12), command=master.retry)
+        self.file_menu.add_command(
+            label="Main Menu", font=inter(12), command=master.home)
+        self.add_cascade(label="File", menu=self.file_menu)
 
 
 class ImagePreviewFrame(tk.Frame):

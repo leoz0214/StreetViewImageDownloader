@@ -195,8 +195,7 @@ class PanoramaRangeInput(tk.Frame):
         self.circle_coordinates = [
             (CANVAS_CIRCLE_RADIUS, CANVAS_CIRCLE_RADIUS),
             (self.total_width - CANVAS_CIRCLE_RADIUS,
-                self.total_height - CANVAS_CIRCLE_RADIUS)
-        ]
+                self.total_height - CANVAS_CIRCLE_RADIUS)]
         self.canvas.create_rectangle(
             *self.circle_coordinates[0], *self.circle_coordinates[1],
             fill=GREY)

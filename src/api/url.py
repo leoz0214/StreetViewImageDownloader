@@ -36,7 +36,7 @@ MIN_FOV = 15
 MAX_FOV = 90
 MIN_YAW = 0
 DEFAULT_YAW = 0
-MAX_YAW = 359.999999999
+MAX_YAW = 360
 MIN_PITCH = 1
 MAX_PITCH = 179
 URL_SUFFIXES = set("ayht")
@@ -129,7 +129,7 @@ def parse_url(url: str) -> StreetViewURL:
                             assert MIN_FOV <= fov <= MAX_FOV
                         case "h":
                             yaw = float(parameter.removesuffix("h"))
-                            assert MIN_YAW <= yaw <= MAX_YAW
+                            assert MIN_YAW <= yaw < MAX_YAW
                         case "t":
                             pitch = float(parameter.removesuffix("t"))
                             assert MIN_PITCH <= pitch <= MAX_PITCH
