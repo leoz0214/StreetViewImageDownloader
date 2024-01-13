@@ -121,7 +121,7 @@ class PanoramaIDInput(tk.Frame):
                     text=f"Missing characters: {missing_characters}", fg=RED)
             else:
                 self.valid = True
-                self.feedback_label.config(text="Valid panorama ID", fg=GREEN)
+                self.feedback_label.config(text="Valid panorama ID.", fg=GREEN)
         self.master.update_download_button_state()
 
 
@@ -139,8 +139,7 @@ class PanoramaSettingsInput(tk.Frame):
             command=lambda *_: self.update_zoom())
         self.range_inputs = [
             PanoramaRangeInput(self, zoom)
-            for zoom in range(MIN_ZOOM, MAX_ZOOM + 1)
-        ]
+            for zoom in range(MIN_ZOOM, MAX_ZOOM + 1)]
         self.range_input = None
         self.update_zoom()
         

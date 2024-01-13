@@ -3,6 +3,7 @@ import tkinter as tk
 
 import __init__
 import panorama_id
+import url
 from _utils import inter, BUTTON_COLOURS
 
 
@@ -47,7 +48,8 @@ class MainMenu(tk.Frame):
     
     def url(self) -> None:
         """Proceeds to downloading by a Google Street View URL."""
-        # TODO
+        self.destroy()
+        url.UrlDownload(self.root).pack()
     
     def batch(self) -> None:
         """Proceeds to batch downloading panoramas/URLs."""
