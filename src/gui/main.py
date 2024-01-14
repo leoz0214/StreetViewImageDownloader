@@ -2,6 +2,7 @@
 import tkinter as tk
 
 import __init__
+import batch
 import panorama_id
 import url
 from _utils import inter, BUTTON_COLOURS
@@ -53,7 +54,8 @@ class MainMenu(tk.Frame):
     
     def batch(self) -> None:
         """Proceeds to batch downloading panoramas/URLs."""
-        # TODO
+        self.destroy()
+        batch.BatchDownload(self.root).pack()
     
     def panorama_rendering(self) -> None:
         """Proceeds to the panorama rendering screen."""
@@ -79,6 +81,7 @@ class Menu(tk.Menu):
 
 
 def main() -> None:
+    """Main procedure of the program."""
     root = tk.Tk()
     main_menu = MainMenu(root)
     main_menu.pack()

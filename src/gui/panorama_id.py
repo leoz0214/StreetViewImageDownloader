@@ -6,9 +6,11 @@ import time
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
+from typing import Union
 
 from PIL import Image
 
+import batch
 import main
 import save
 from _utils import (
@@ -83,7 +85,9 @@ class PanoramaDownload(tk.Frame):
 class PanoramaIDInput(tk.Frame):
     """Frame for handling panorama ID input."""
 
-    def __init__(self, master: PanoramaDownload) -> None:
+    def __init__(
+        self, master: Union[PanoramaDownload, "batch.PanoramaIDToplevel"]
+    ) -> None:
         super().__init__(master)
         self.label = tk.Label(self, font=inter(20), text="Panorama ID:")
         self._panorama_id = tk.StringVar()
@@ -122,7 +126,10 @@ class PanoramaIDInput(tk.Frame):
             else:
                 self.valid = True
                 self.feedback_label.config(text="Valid panorama ID.", fg=GREEN)
-        self.master.update_download_button_state()
+        if isinstance(self.master, PanoramaDownload):
+            self.master.update_download_button_state()
+        else:
+            self.master.update_submit_button_state()
 
 
 class PanoramaSettingsInput(tk.Frame):

@@ -1,6 +1,7 @@
 """Utilities for the GUI."""
 import pathlib
 import tkinter as tk
+from tkinter.font import Font
 
 import pyglet
 
@@ -40,3 +41,10 @@ def draw_circle(
 def bool_to_state(expression: bool) -> str:
     """Returns 'normal' if True, else 'disabled'"""
     return "normal" if expression else "disabled"
+
+
+def get_text_width(text: str, font: tuple) -> int:
+    """Returns the text width for a given font in pixels."""
+    font = Font(family=font[0], size=font[1])
+    return font.measure(text)
+

@@ -114,6 +114,7 @@ class UrlDownload(tk.Frame):
         # Further errors are also ignored.
         self.download_id += 1
 
+
 class UrlInput(tk.Frame):
     """Allows the user to input the URL, with immediate validation."""
 
@@ -193,9 +194,7 @@ class DimensionInput(tk.Frame):
         return self._value.get()
     
     def update_value(self, entry_change: bool) -> None:
-        """
-        Synchronises the scale and entry, performing relevant validation.
-        """
+        """Synchronises the scale and entry, with relevant validation."""
         if not entry_change:
             self._value_str.set(str(self._value.get()))
             self.previous_width = self._value.get()
