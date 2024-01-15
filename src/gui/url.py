@@ -3,7 +3,9 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox
+from typing import Union
 
+import batch
 import main
 import save
 from _utils import inter, RED, GREEN, BUTTON_COLOURS, bool_to_state
@@ -118,7 +120,9 @@ class UrlDownload(tk.Frame):
 class UrlInput(tk.Frame):
     """Allows the user to input the URL, with immediate validation."""
 
-    def __init__(self, master: UrlDownload) -> None:
+    def __init__(
+        self, master: Union[UrlDownload, "batch.UrlToplevel"]
+    ) -> None:
         super().__init__(master)
         self._url = tk.StringVar()
         self._url.trace_add("write", lambda *_: self.validate())
@@ -157,15 +161,18 @@ class UrlInput(tk.Frame):
             except ValueError as e:
                 self.valid = False
                 self.feedback_label.config(text=e, fg=RED)
-        self.master.update_download_button_state()
+        if isinstance(self.master, UrlDownload):
+            self.master.update_download_button_state()
+        else:
+            self.master.update_submit_button_state()
 
 
 class DimensionInput(tk.Frame):
     """Input for a single dimension - width or height."""
 
     def __init__(
-        self, master: UrlDownload, label: str,
-        minimum: int, maximum: int, default: int
+        self, master: Union[UrlDownload, "batch.UrlSettingsToplevel"],
+        label: str, minimum: int, maximum: int, default: int
     ) -> None:
         super().__init__(master)
         self.min = minimum

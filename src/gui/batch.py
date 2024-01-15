@@ -6,12 +6,16 @@ from contextlib import suppress
 from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
-from typing import Callable
+from typing import Callable, Union
 
 import main
 import panorama_id
+import url
 from _utils import inter, BUTTON_COLOURS, GREEN, get_text_width, bool_to_state
 from api.panorama import validate_panorama_id, PanoramaSettings
+from api.url import (
+    DEFAULT_WIDTH, DEFAULT_HEIGHT,
+    MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT, parse_url)
 
 
 MIN_TABLE_HEIGHT = 15
@@ -122,25 +126,11 @@ class BatchPanoramaIDDownload(tk.Frame):
         self.settings = PanoramaSettings()
         self.info_label = tk.Label(self, font=inter(12))
         self.update_info_label()
-        self.import_csv_button = tk.Button(
-            self, font=inter(15), text="Import CSV", width=15,
-            **BUTTON_COLOURS, command=self.import_csv)
-        self.add_button = tk.Button(
-            self, font=inter(15), text="Add", width=15,
-            **BUTTON_COLOURS, command=self.add)
-        self.settings_button = tk.Button(
-            self, font=inter(15), text="Settings", width=15,
-            **BUTTON_COLOURS, command=self.edit_settings)
-        self.export_csv_button = tk.Button(
-            self, font=inter(15), text="Export CSV", width=15,
-            **BUTTON_COLOURS, command=self.export_csv)
+        self.buttons = DownloadInputButtons(self)
 
-        self.table.grid(row=0, column=0, columnspan=4, padx=10, pady=5)
-        self.info_label.grid(row=1, column=0, columnspan=4, padx=10, pady=5)
-        self.import_csv_button.grid(row=2, column=0, padx=5, pady=5)
-        self.add_button.grid(row=2, column=1, padx=5, pady=5)
-        self.settings_button.grid(row=2, column=2, padx=5, pady=5)
-        self.export_csv_button.grid(row=2, column=3, padx=5, pady=5)
+        self.table.pack(padx=10, pady=5)
+        self.info_label.pack(padx=10, pady=5)
+        self.buttons.pack(padx=10, pady=5)
     
     def add(self) -> None:
         """Allows the user to add a panorama ID, file save path pair."""
@@ -153,6 +143,12 @@ class BatchPanoramaIDDownload(tk.Frame):
     
     def edit(self) -> None:
         """Updates the currently selected record."""
+        if any(
+            isinstance(widget, PanoramaIDToplevel) 
+            for widget in self.children.values()
+        ):
+            # Only one instance at a time.
+            return
         with suppress(IndexError):
             index = self.table.selected
             record = self.table.records[index]
@@ -176,6 +172,39 @@ class BatchPanoramaIDDownload(tk.Frame):
                 f"Tiles: {self.settings.tiles}"))
         self.info_label.config(text=text)
     
+    def edit_settings(self) -> None:
+        """Allows the panorama download settings to be edited."""
+        PanoramaIDSettingsToplevel(self)
+
+
+class DownloadInputButtons(tk.Frame):
+    """
+    Relevant buttons for CSV importing/exporting,
+    adding inputs and adjusting settings.
+    """
+
+    def __init__(
+        self, master: Union[BatchPanoramaIDDownload, "BatchUrlDownload"]
+    ) -> None:
+        super().__init__(master)
+        self.import_csv_button = tk.Button(
+            self, font=inter(15), text="Import CSV", width=15,
+            **BUTTON_COLOURS, command=self.import_csv)
+        self.add_button = tk.Button(
+            self, font=inter(15), text="Add", width=15,
+            **BUTTON_COLOURS, command=master.add)
+        self.settings_button = tk.Button(
+            self, font=inter(15), text="Settings", width=15,
+            **BUTTON_COLOURS, command=master.edit_settings)
+        self.export_csv_button = tk.Button(
+            self, font=inter(15), text="Export CSV", width=15,
+            **BUTTON_COLOURS, command=self.export_csv)
+        
+        self.import_csv_button.grid(row=0, column=0, padx=5)
+        self.add_button.grid(row=0, column=1, padx=5)
+        self.settings_button.grid(row=0, column=2, padx=5)
+        self.export_csv_button.grid(row=0, column=3, padx=5)
+
     def import_csv(self) -> None:
         """Imports a CSV file as input (first two columns only)."""
         try:
@@ -191,13 +220,16 @@ class BatchPanoramaIDDownload(tk.Frame):
                 reader = csv.reader(f, dialect)
                 for i, record in enumerate(reader):
                     try:
-                        panorama_id, file_path, *_ = record
-                        validate_panorama_id(panorama_id)
+                        value, file_path, *_ = record
+                        if isinstance(self.master, BatchPanoramaIDDownload):
+                            validate_panorama_id(value)
+                        else:
+                            parse_url(value)
                         if file_path.lower() in seen_file_paths:
                             raise RuntimeError(
                                 "Same file path input multiple times.")
                         seen_file_paths.add(file_path.lower())
-                        records.append((panorama_id, file_path))
+                        records.append((value, file_path))
                         if len(records) > MAX_BATCH_SIZE:
                             raise RuntimeError(
                                 "Maximum batch size of "
@@ -205,30 +237,36 @@ class BatchPanoramaIDDownload(tk.Frame):
                     except RuntimeError as e:
                         raise e
                     except Exception as e:
-                        if i == 0:
+                        if i == 0 or all(not value for value in record):
                             # Ignore first row if invalid (assume headings).
+                            # Also ignore entirely empty row.
                             continue
+                        if isinstance(self.master, BatchPanoramaIDDownload):
+                            field = "panorama ID"
+                        else:
+                            field = "URL"
                         raise RuntimeError(
-                            "Invalid panorama ID or file save path found. "
+                            f"Invalid {field} or file save path found. "
                             "Please check all inputs are valid.")
-            if self.table.records and not messagebox.askyesnocancel(
+            table = self.master.table
+            if table.records and not messagebox.askyesnocancel(
                 "Confirm",
                     "Are you sure you would like to import the CSV?\n"
                     "The current input will be overwritten."
             ):
                 return
-            self.table.text_widths = [
+            table.text_widths = [
                 [get_text_width(text + " ", inter(11)) for text in record]
                 for record in records]
-            self.table.records = records
-            self.table.create_treeview()
-            for record in self.table.records:
-                self.table.treeview.insert("", "end", values=record)
-            self.update_info_label()
+            table.records = records
+            table.create_treeview()
+            for record in table.records:
+                table.treeview.insert("", "end", values=record)
+            self.master.update_info_label()
         except Exception as e:
             messagebox.showerror(
                 "Error", f"Unfortunately, an error has occurred: {e}")
-    
+
     def export_csv(self) -> None:
         """Exports a CSV file based on the current input."""
         file_path = filedialog.asksaveasfilename(
@@ -237,12 +275,11 @@ class BatchPanoramaIDDownload(tk.Frame):
             return
         with open(file_path, "w", encoding="utf8") as f:
             writer = csv.writer(f, lineterminator="\n")
-            writer.writerow(PANORAMA_ID_HEADINGS)
-            writer.writerows(self.table.records)
-    
-    def edit_settings(self) -> None:
-        """Allows the panorama download settings to be edited."""
-        PanoramaIDSettingsToplevel(self)
+            if isinstance(self.master, BatchPanoramaIDDownload):   
+                writer.writerow(PANORAMA_ID_HEADINGS)
+            else:
+                writer.writerow(URL_HEADINGS)
+            writer.writerows(self.master.table.records)
 
 
 class Table(tk.Frame):
@@ -328,7 +365,7 @@ class Table(tk.Frame):
         self.records[index] = record
         new_column_widths = self.get_column_widths()
         if previous_column_widths == new_column_widths:
-            self.treeview.delete(self.treeview.selection())
+            self.treeview.delete(self.treeview.get_children()[index])
             self.treeview.insert("", index, values=record)
             return
         self.create_treeview()
@@ -342,7 +379,7 @@ class Table(tk.Frame):
         self.records.pop(index)
         new_column_widths = self.get_column_widths()
         if previous_column_widths == new_column_widths:
-            self.treeview.delete(self.treeview.selection())
+            self.treeview.delete(self.treeview.get_children()[index])
             return
         self.create_treeview()
         for record in self.records:
@@ -361,23 +398,27 @@ class Table(tk.Frame):
         return widths
 
 
-class PanoramaIDToplevel(tk.Toplevel):
-    """Window to allow the user to add/edit/delete a panorama ID."""
+class InputToplevel(tk.Toplevel):
+    """Master toplevel for panorama ID/URL and file path input."""
 
     def __init__(
-        self, master: BatchPanoramaIDDownload,
-        index: int = None, _panorama_id: str = None, file_path: str = None
+        self, master: tk.Frame, field: str,
+        input_frame: panorama_id.PanoramaIDInput | url.UrlInput,
+        input_frame_variable: str, input_frame_property: str,
+        index: int, value: str, file_path: str
     ) -> None:
         super().__init__(master)
         self.index = index
         self.keyword = "Edit" if self.index is not None else "Add"
+        self.field = field
+        self.property = input_frame_property
         self.title(
-            f"{main.TITLE} - Batch Download - {self.keyword} Panorama ID")
+            f"{main.TITLE} - Batch Download - {self.keyword} {self.field}")
         self.grab_set()
 
         self.title_label = tk.Label(
-            self, font=inter(25, True), text=f"{self.keyword} Panorama ID")
-        self.panorama_id_input = panorama_id.PanoramaIDInput(self)
+            self, font=inter(25, True), text=f"{self.keyword} {self.field}")
+        self.input_frame = input_frame(self)
         self.file_input = FileInput(self)
         
         self.bind("<Control-o>", lambda *_: self.file_input.select())
@@ -387,7 +428,7 @@ class PanoramaIDToplevel(tk.Toplevel):
             **BUTTON_COLOURS, command=self.submit)
 
         if self.index is not None:
-            self.panorama_id_input._panorama_id.set(_panorama_id)
+            getattr(self.input_frame, input_frame_variable).set(value)
             self.file_input._file_path.set(file_path)
             self.delete_button = tk.Button(
                 self, font=inter(20), text="Delete", width=15,
@@ -395,7 +436,7 @@ class PanoramaIDToplevel(tk.Toplevel):
         self.update_submit_button_state()
     
         self.title_label.pack(padx=10, pady=10)
-        self.panorama_id_input.pack(padx=10, pady=10)
+        self.input_frame.pack(padx=10, pady=10)
         self.file_input.pack(padx=10, pady=10)
         self.submit_button.pack(padx=10, pady=10)
         if self.index is not None:
@@ -404,15 +445,15 @@ class PanoramaIDToplevel(tk.Toplevel):
     def update_submit_button_state(self):
         """
         Enables the submit button if the
-        panorama ID input is valid and a file has been provided.
+        input is valid and a file has been provided.
         """
         self.submit_button.config(
             state=bool_to_state(
-                self.panorama_id_input.valid and self.file_input.file_path))
+                self.input_frame.valid and self.file_input.file_path))
 
     def submit(self) -> None:
         """Submits the input and adds/edits as required."""
-        panorama_id = self.panorama_id_input.panorama_id
+        value = getattr(self.input_frame, self.property)
         file_path = self.file_input.file_path
         if any(
             i != self.index and file_path.lower() == existing_file_path.lower()
@@ -422,9 +463,9 @@ class PanoramaIDToplevel(tk.Toplevel):
             messagebox.showerror(
                 "Error",
                     "The file path provided has already been "
-                    "set for another panorama ID.", parent=self)
+                    "set for another record.", parent=self)
             return
-        record = (panorama_id, file_path)
+        record = (value, file_path)
         if self.index is None:
             self.master.table.append(record)
         else:
@@ -442,10 +483,22 @@ class PanoramaIDToplevel(tk.Toplevel):
         self.master.update_info_label()
 
 
+class PanoramaIDToplevel(InputToplevel):
+    """Window to allow the user to add/edit/delete a panorama ID."""
+
+    def __init__(
+        self, master: BatchPanoramaIDDownload,
+        index: int = None, _panorama_id: str = None, file_path: str = None
+    ) -> None:
+        super().__init__(
+            master, "Panorama ID", panorama_id.PanoramaIDInput,
+            "_panorama_id", "panorama_id", index, _panorama_id, file_path)
+
+
 class FileInput(tk.Frame):
     """File path input including a button to set file and a display."""
 
-    def __init__(self, master: tk.Frame) -> None:
+    def __init__(self, master: InputToplevel) -> None:
         super().__init__(master)
         self._file_path = tk.StringVar()
 
@@ -472,8 +525,7 @@ class FileInput(tk.Frame):
         if not file_path:
             return
         self._file_path.set(file_path)
-        if isinstance(self.master, PanoramaIDToplevel):
-            self.master.update_submit_button_state()
+        self.master.update_submit_button_state()
 
 
 class PanoramaIDSettingsToplevel(tk.Toplevel):
@@ -515,9 +567,90 @@ class BatchUrlDownload(tk.Frame):
 
     def __init__(self, master: BatchDownload) -> None:
         super().__init__(master)
+        self.width = DEFAULT_WIDTH
+        self.height = DEFAULT_HEIGHT
         self.table = Table(self, URL_HEADINGS, (500, 500), self.edit)
+        self.info_label = tk.Label(self, font=inter(12))
+        self.update_info_label()
+        self.buttons = DownloadInputButtons(self)
 
-        self.table.pack()
+        self.table.pack(padx=10, pady=5)
+        self.info_label.pack(padx=10, pady=5)
+        self.buttons.pack(padx=10, pady=5)
+    
+    def update_info_label(self) -> None:
+        """Updates information, including URL count, width and height."""
+        text = " | ".join((
+            f"Count: {len(self.table.records)}",
+            f"Dimension: {self.width} x {self.height}"))
+        self.info_label.config(text=text)
+    
+    def add(self) -> None:
+        """Allows a URL/file path pair to be input."""
+        UrlToplevel(self)
     
     def edit(self) -> None:
         """Allows a URL/file path pair to be edited."""
+        if any(
+            isinstance(widget, UrlToplevel)
+            for widget in self.children.values()
+        ):
+            # Only one instance open at a time.
+            return
+        with suppress(IndexError):
+            index = self.table.selected
+            record = self.table.records[index]
+            UrlToplevel(self, index, *record)
+    
+    def edit_settings(self) -> None:
+        """Allows the user to adjust the URL download settings."""
+        UrlSettingsToplevel(self)
+
+    def import_csv(self) -> None:
+        """Imports a CSV file of URL/file path pairs."""
+    
+    def export_csv(self) -> None:
+        """Exports a CSV file of URL/file path pairs."""
+
+
+class UrlToplevel(InputToplevel):
+    """Window to allow the user to add/edit/delete a URL."""
+
+    def __init__(
+        self, master: BatchUrlDownload,
+        index: int = None, _url: str = None, file_path: str = None
+    ) -> None:
+        super().__init__(
+            master, "URL", url.UrlInput, "_url", "url", index, _url, file_path)
+
+
+class UrlSettingsToplevel(tk.Toplevel):
+    """Allows the user to set the URL download settings (width and height)."""
+
+    def __init__(self, master: BatchUrlDownload) -> None:
+        super().__init__(master)
+        self.title(f"{main.TITLE} - Batch Download - URL Download Settings")
+
+        self.title_label = tk.Label(
+            self, font=inter(25, True), text="URL Download Settings")
+        self.width_input = url.DimensionInput(
+            self, "Width:", MIN_WIDTH, MAX_WIDTH, master.width)
+        self.height_input = url.DimensionInput(
+            self, "Height:", MIN_HEIGHT, MAX_HEIGHT, master.height)
+        self.save_button = tk.Button(
+            self, font=inter(20), text="Save", width=15,
+            **BUTTON_COLOURS, command=self.save)
+        
+        self.title_label.pack(padx=10, pady=10)
+        self.width_input.pack(padx=10, pady=10)
+        self.height_input.pack(padx=10, pady=10)
+        self.save_button.pack(padx=10, pady=10)
+    
+    def save(self) -> None:
+        """Saves the URL settings."""
+        width = self.width_input.value
+        height = self.height_input.value
+        self.master.width = width
+        self.master.height = height
+        self.master.update_info_label()
+        self.destroy()
