@@ -137,7 +137,10 @@ class PanoramaSettingsInput(tk.Frame):
     Allows the user to input panorama download settings: zoom and tile range.
     """
 
-    def __init__(self, master: PanoramaDownload) -> None:
+    def __init__(
+        self,
+        master: Union[PanoramaDownload, "batch.PanoramaIDSettingsToplevel"]
+    ) -> None:
         super().__init__(master)
         self.zoom_label = tk.Label(self, font=inter(20), text="Zoom:")
         self.zoom_scale = tk.Scale(
@@ -187,9 +190,11 @@ class PanoramaRangeInput(tk.Frame):
         self.info_label = tk.Label(self, font=inter(12))
         if self.zoom == 0:
             # Only one tile - no point in additional settings.
-            self.info_label.config(
-                text="The entire panorama will be downloaded.",
-                font=inter(25))
+            if isinstance(master.master, PanoramaDownload):
+                text = "The entire panorama will be downloaded."
+            else:
+                text = "Entire panoramas will be downloaded."
+            self.info_label.config(text=text, font=inter(25))
             self.info_label.place(relx=0.5, rely=0.5, anchor="center")
             return
         self.width, self.height = CANVAS_DIMENSIONS_BY_ZOOM[self.zoom]
@@ -339,6 +344,20 @@ class PanoramaRangeInput(tk.Frame):
         
         self.selected_circle = None
         self.previous_circle_coordinates = None
+        self.update_info()
+    
+    def set_corners(
+        self, top_left: tuple[int, int], bottom_right: tuple[int, int]
+    ) -> None:
+        """Programmatically sets the top left/bottom right coordinates."""
+        self.top_left = top_left
+        self.bottom_right = bottom_right
+        self.circle_coordinates = [
+            (
+                CANVAS_CIRCLE_RADIUS + x * self.width // self.max_x,
+                CANVAS_CIRCLE_RADIUS + y * self.height // self.max_y)
+            for x, y in (self.top_left, self.bottom_right)]
+        self.draw()
         self.update_info()
     
     def update_info(self) -> None:
