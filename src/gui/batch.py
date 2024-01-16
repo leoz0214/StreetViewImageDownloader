@@ -1,6 +1,10 @@
 """Batch downloading of images by panorama ID or URL."""
+import asyncio
 import csv
 import enum
+import threading
+import time
+import timeit
 import tkinter as tk
 from contextlib import suppress
 from tkinter import filedialog
@@ -11,23 +15,27 @@ from typing import Callable, Union
 import main
 import panorama_id
 import url
-from _utils import inter, BUTTON_COLOURS, GREEN, get_text_width, bool_to_state
-from api.panorama import validate_panorama_id, PanoramaSettings
+from _utils import (
+    inter, BUTTON_COLOURS, GREEN, RED, BLACK, get_text_width, bool_to_state,
+    format_seconds)
+from api.panorama import (
+    validate_panorama_id, PanoramaSettings, _get_async_images, _combine_tiles)
 from api.url import (
     DEFAULT_WIDTH, DEFAULT_HEIGHT,
-    MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT, parse_url)
+    MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT, parse_url, get_pil_image)
 
 
 MIN_TABLE_HEIGHT = 15
 MAX_BATCH_SIZE = 1000
 PANORAMA_ID_HEADINGS = ("Panorama ID", "File Save Path")
 URL_HEADINGS = ("URL", "File Save Path")
+DOWNLOAD_STATUS_CHECK_RATE = 0.05
 
 
 class DownloadMode(enum.Enum):
     """Enum representing the two download modes."""
-    panorama_id = 0
-    url = 1
+    panorama_id = "Panorama ID"
+    url = "URL"
 
 
 class BatchDownload(tk.Frame):
@@ -44,6 +52,7 @@ class BatchDownload(tk.Frame):
         self.download_mode_frame = BatchDownloadMode(self)
         self.panorama_id_frame = BatchPanoramaIDDownload(self)
         self.url_frame = BatchUrlDownload(self)
+        self.to_display = None
         self.error_handling_checkbutton = tk.Checkbutton(
             self, font=inter(15), text="Stop upon error",
             variable=self._stop_upon_error)
@@ -70,12 +79,12 @@ class BatchDownload(tk.Frame):
     def display_input_frame(self) -> None:
         """Displays the appropriate frame based on download mode selection."""
         if self.download_mode_frame.download_mode == DownloadMode.panorama_id:
-            to_display = self.panorama_id_frame
+            self.to_display = self.panorama_id_frame
             to_hide = self.url_frame
         else:
-            to_display = self.url_frame
+            self.to_display = self.url_frame
             to_hide = self.panorama_id_frame
-        to_display.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
+        self.to_display.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
         to_hide.grid_forget()
     
     def back(self) -> None:
@@ -85,7 +94,25 @@ class BatchDownload(tk.Frame):
     
     def download(self) -> None:
         """Downloads all the panorama ID/urls as required."""
-        # TODO
+        stop_upon_error = self.stop_upon_error
+        download_mode = self.download_mode_frame.download_mode
+        records = self.to_display.table.records
+        if not records:
+            messagebox.showerror(
+                "No input",
+                "Please add at least one input before starting the download.")
+            return
+        if download_mode == DownloadMode.panorama_id:
+            panorama_settings = self.to_display.settings
+            width = None
+            height = None
+        else:
+            panorama_settings = None
+            width = self.to_display.width
+            height = self.to_display.height
+        BatchDownloadToplevel(
+            self, stop_upon_error, download_mode, records,
+            panorama_settings, width, height)
 
 
 class BatchDownloadMode(tk.Frame):
@@ -606,12 +633,6 @@ class BatchUrlDownload(tk.Frame):
         """Allows the user to adjust the URL download settings."""
         UrlSettingsToplevel(self)
 
-    def import_csv(self) -> None:
-        """Imports a CSV file of URL/file path pairs."""
-    
-    def export_csv(self) -> None:
-        """Exports a CSV file of URL/file path pairs."""
-
 
 class UrlToplevel(InputToplevel):
     """Window to allow the user to add/edit/delete a URL."""
@@ -654,3 +675,180 @@ class UrlSettingsToplevel(tk.Toplevel):
         self.master.height = height
         self.master.update_info_label()
         self.destroy()
+
+
+class BatchDownloadToplevel(tk.Toplevel):
+    """
+    Toplevel where the batch downloading occurs
+    when the user clicks on the download button.
+    """
+
+    def __init__(
+        self, master: BatchDownload, stop_upon_error: bool,
+        mode: DownloadMode, records: list[tuple],
+        panorama_settings: panorama_id.PanoramaSettings = None,
+        width: int = None, height: int = None
+    ) -> None:
+        super().__init__(master)
+        self.stop_upon_error = stop_upon_error
+        self.mode = mode
+        self.records = records
+        self.panorama_settings = panorama_settings
+        self.url_width = width
+        self.url_height = height
+        self.done = 0
+        self.cancelled = False
+        self.image = None
+        self.exception = None
+        if self.mode == DownloadMode.panorama_id:
+            self.tiles = [
+                [None] * self.panorama_settings.width
+                for _ in range(self.panorama_settings.height)]
+
+        self.title(
+            f"{main.TITLE} - Batch Download - "
+            f"Downloading {self.mode.value}s...")
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+
+        self.title_label = tk.Label(
+            self, font=inter(25, True),
+            text=f"Downloading {self.mode.value}s...")
+        self.progress_bar = ttk.Progressbar(
+            self, length=1000, maximum=len(self.records),
+            orient="horizontal")
+        self.progress_label = tk.Label(self, font=inter(12))
+        self.update_progress()
+        self.logger = Logger(self)
+        self.cancel_button = tk.Button(
+            self, font=inter(20), text="Cancel", width=15,
+            bg=RED, activebackground=RED, command=self.cancel)
+
+        threading.Thread(target=self.download, daemon=True).start()
+
+        self.title_label.pack(padx=10, pady=10)
+        self.progress_bar.pack(padx=25, pady=10)
+        self.progress_label.pack(padx=10, pady=10)
+        self.logger.pack(padx=10, pady=10)
+        self.cancel_button.pack(padx=10, pady=10)
+    
+    def update_progress(self) -> None:
+        """Updates the progress bar and label."""
+        percentage = round(self.done / len(self.records) * 100, 1)
+        self.progress_bar.config(value=self.done)
+        text = " | ".join((
+            f"Downloaded: {self.done} / {len(self.records)}",
+            f"Progress: {percentage}%"))
+        self.progress_label.config(text=text)
+
+    def _process_panorama_download(self, panorama_id: str) -> None:
+        try:
+            asyncio.set_event_loop_policy(
+                asyncio.WindowsSelectorEventLoopPolicy())
+            asyncio.run(_get_async_images(
+                self.tiles, panorama_id, self.panorama_settings, self))
+            image = _combine_tiles(self.tiles, True, self)
+            if self.cancelled:
+                raise RuntimeError
+            if image.size == (0, 0):
+                raise RuntimeError("No panorama data.")
+            self.image = image
+        except Exception as e:
+            self.exception = e
+        
+    def _process_url_download(self, url: str) -> None:
+        try:
+            image = get_pil_image(url, self.url_width, self.url_height)
+            if self.cancelled:
+                raise RuntimeError
+            self.image = image
+        except Exception as e:
+            self.exception = e
+    
+    def download(self) -> None:
+        """Sequentially downloads and saves each input."""
+        start = timeit.default_timer()
+        for i, (value, file_path) in enumerate(self.records, 1):
+            if self.cancelled:
+                return
+            self.logger.log_neutral(f"{i}. {value}")
+            if self.mode == DownloadMode.panorama_id:
+                target = lambda: self._process_panorama_download(value)
+            else:
+                target = lambda: self._process_url_download(value)
+            threading.Thread(target=target, daemon=True).start()
+            while True:
+                if self.cancelled:
+                    return
+                if self.exception is not None:
+                    self.logger.log_bad(f"Download Error: {self.exception}")
+                    if self.stop_upon_error:
+                        self.logger.log_bad("Downloading terminated.")
+                        self.cancel_button.config(
+                            text="Close", **BUTTON_COLOURS)
+                        return
+                    self.exception = None
+                    break
+                if self.image is not None:
+                    break
+                time.sleep(DOWNLOAD_STATUS_CHECK_RATE)
+            if self.image is None:
+                continue
+            try:
+                self.image.save(file_path, format="jpeg")
+            except Exception as e:
+                self.logger.log_bad(f"Save Error: {e}")
+                if self.stop_upon_error:
+                    self.logger.log_bad("Downloading terminated.")
+                    return
+            else:
+                self.logger.log_good(
+                    f"Successfully saved image to {file_path}")
+                self.done += 1
+                self.update_progress()
+            self.image = None
+        stop = timeit.default_timer()
+        time_taken = format_seconds(stop - start)
+        self.logger.log_good(f"Downloading completed in {time_taken}.")
+        self.cancel_button.config(
+            text="Close", bg=GREEN, activebackground=GREEN)
+    
+    def cancel(self) -> None:
+        """Cancels the bulk download."""
+        self.cancelled = True
+        self.destroy()
+
+
+class Logger(tk.Frame):
+    """Text logging for good, neutral and bad messages."""
+
+    def __init__(self, master: BatchDownloadToplevel) -> None:
+        super().__init__(master)
+        self.textbox = tk.Text(
+            self, font=inter(11), width=64, height=25, state="disabled")
+        self.scrollbar = tk.Scrollbar(
+            self, orient="vertical", command=self.textbox.yview)
+        self.textbox.config(yscrollcommand=self.scrollbar.set)
+        self.textbox.tag_config("good", foreground=GREEN)
+        self.textbox.tag_config("neutral", foreground=BLACK)
+        self.textbox.tag_config("bad", foreground=RED)
+
+        self.textbox.grid(row=0, column=0)
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+    
+    def _log(self, text: str, tag: str) -> None:
+        self.textbox.config(state="normal")
+        self.textbox.insert("end", f"{text}\n", tag)
+        self.textbox.config(state="disabled")
+    
+    def log_good(self, text: str) -> None:
+        """Logs a positive message."""
+        self._log(text, "good")
+    
+    def log_neutral(self, text: str) -> None:
+        """Logs a neutral message."""
+        self._log(text, "neutral")
+    
+    def log_bad(self, text: str) -> None:
+        """Logs a bad message, including errors."""
+        self._log(text, "bad")

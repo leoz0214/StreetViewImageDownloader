@@ -47,3 +47,12 @@ def get_text_width(text: str, font: tuple) -> int:
     """Returns the text width for a given font in pixels."""
     font = Font(family=font[0], size=font[1])
     return font.measure(text)
+
+
+def format_seconds(seconds: float) -> str:
+    """Converts seconds to HH:MM:SS"""
+    seconds = int(seconds)
+    hours = str(seconds // 3600).zfill(2)
+    minutes = str(seconds % 3600 // 60).zfill(2)
+    seconds = str(seconds % 60).zfill(2)
+    return f"{hours}:{minutes}:{seconds}"
