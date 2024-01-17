@@ -293,7 +293,7 @@ def _combine_tiles(
             row_image.paste(
                 tile, (TILE_WIDTH * i, 0, TILE_WIDTH * (i+1), TILE_HEIGHT))
         rows.append(row_image)
-    width, _ = rows[0].size
+    width = rows[0].width
     height = TILE_HEIGHT * len(rows)
     image = Image.new("RGB", (width, height))
     for i, row in enumerate(rows):
@@ -302,8 +302,12 @@ def _combine_tiles(
         image.paste(row, (0, TILE_HEIGHT * i, width, TILE_HEIGHT * (i+1)))
     if not crop_black_edges:
         return image
-    # Checks for bottom/right black edges and crops if necessary.
     pixels = image.load()
+    # Quick check of top left 32x32 area. If this area is fully black,
+    # then assume entire image is black and thus no information.
+    if not any(any(pixels[x, y]) for y in range(32) for x in range(32)):
+        return image.crop((0, 0, 0, 0))
+    # Checks for bottom/right black edges and crops if necessary.
     for y in range(height - 1, -1, -1):
         if gui is not None and gui.cancelled:
             raise RuntimeError

@@ -454,6 +454,8 @@ class PanoramaDownloadToplevel(tk.Toplevel):
                     raise self.exception
                 self.update_progress()
                 time.sleep(DOWNLOAD_PROGRESS_REFRESH_RATE)
+            if self.exception is not None:
+                raise self.exception
         except Exception as e:
             if self.cancelled:
                 return

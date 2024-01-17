@@ -30,6 +30,7 @@ MAX_BATCH_SIZE = 1000
 PANORAMA_ID_HEADINGS = ("Panorama ID", "File Save Path")
 URL_HEADINGS = ("URL", "File Save Path")
 DOWNLOAD_STATUS_CHECK_RATE = 0.05
+TABLE_FONT = inter(11)
 
 
 class DownloadMode(enum.Enum):
@@ -86,6 +87,9 @@ class BatchDownload(tk.Frame):
             to_hide = self.panorama_id_frame
         self.to_display.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
         to_hide.grid_forget()
+        # Set focus on root window (to unfocus from the treeview).
+        # This avoids issues such as arrow keys opening edit windows.
+        self.root.focus()
     
     def back(self) -> None:
         """Returns to the main menu."""
@@ -124,24 +128,19 @@ class BatchDownloadMode(tk.Frame):
         self._download_mode.trace_add(
             "write", lambda *_: master.display_input_frame())
         self.label = tk.Label(self, font=inter(20), text="Download By:")
-        self.by_panorama_id = tk.Radiobutton(
-            self, font=inter(20), text="Panorama ID", width=15,
-            value=0, variable=self._download_mode, indicatoron=False,
-            **BUTTON_COLOURS, selectcolor=GREEN)
-        self.by_url = tk.Radiobutton(
-            self, font=inter(20), text="URL", width=15,
-            value=1, variable=self._download_mode, indicatoron=False,
-            **BUTTON_COLOURS, selectcolor=GREEN)
-        
         self.label.grid(row=0, column=0, padx=10)
-        self.by_panorama_id.grid(row=0, column=1, padx=10)
-        self.by_url.grid(row=0, column=2, padx=10)
+
+        for value, text in enumerate(("Panorama ID", "URL")):
+            radiobutton = tk.Radiobutton(
+                self, font=inter(20), text=text, width=15,
+                value=value, variable=self._download_mode, indicatoron=False,
+                **BUTTON_COLOURS, selectcolor=GREEN)
+            radiobutton.grid(row=0, column=value + 1, padx=10)
     
     @property
     def download_mode(self) -> DownloadMode:
-        return (
-            DownloadMode.panorama_id, DownloadMode.url
-        )[self._download_mode.get()]
+        value = self._download_mode.get()
+        return (DownloadMode.panorama_id, DownloadMode.url)[value]
 
 
 class BatchPanoramaIDDownload(tk.Frame):
@@ -163,8 +162,7 @@ class BatchPanoramaIDDownload(tk.Frame):
         """Allows the user to add a panorama ID, file save path pair."""
         if len(self.table.records) == MAX_BATCH_SIZE:
             messagebox.showerror(
-                "Error",
-                    f"Maximum batch size of {MAX_BATCH_SIZE} reached.")
+                "Error", f"Maximum batch size of {MAX_BATCH_SIZE} reached.")
             return
         PanoramaIDToplevel(self)
     
@@ -174,7 +172,7 @@ class BatchPanoramaIDDownload(tk.Frame):
             isinstance(widget, PanoramaIDToplevel) 
             for widget in self.children.values()
         ):
-            # Only one instance at a time.
+            # Only one instance of the panorama toplevel at a time.
             return
         with suppress(IndexError):
             index = self.table.selected
@@ -214,23 +212,16 @@ class DownloadInputButtons(tk.Frame):
         self, master: Union[BatchPanoramaIDDownload, "BatchUrlDownload"]
     ) -> None:
         super().__init__(master)
-        self.import_csv_button = tk.Button(
-            self, font=inter(15), text="Import CSV", width=15,
-            **BUTTON_COLOURS, command=self.import_csv)
-        self.add_button = tk.Button(
-            self, font=inter(15), text="Add", width=15,
-            **BUTTON_COLOURS, command=master.add)
-        self.settings_button = tk.Button(
-            self, font=inter(15), text="Settings", width=15,
-            **BUTTON_COLOURS, command=master.edit_settings)
-        self.export_csv_button = tk.Button(
-            self, font=inter(15), text="Export CSV", width=15,
-            **BUTTON_COLOURS, command=self.export_csv)
-        
-        self.import_csv_button.grid(row=0, column=0, padx=5)
-        self.add_button.grid(row=0, column=1, padx=5)
-        self.settings_button.grid(row=0, column=2, padx=5)
-        self.export_csv_button.grid(row=0, column=3, padx=5)
+        for column, (text, command) in enumerate(
+            (
+                ("Import CSV", self.import_csv), ("Add", master.add),
+                ("Settings", master.edit_settings),
+                ("Export CSV", self.export_csv))
+        ):
+            button = tk.Button(
+                self, font=inter(15), text=text, width=15,
+                **BUTTON_COLOURS, command=command)
+            button.grid(row=0, column=column, padx=5)
 
     def import_csv(self) -> None:
         """Imports a CSV file as input (first two columns only)."""
@@ -283,7 +274,7 @@ class DownloadInputButtons(tk.Frame):
             ):
                 return
             table.text_widths = [
-                [get_text_width(text + " ", inter(11)) for text in record]
+                [get_text_width(f"{text} ", TABLE_FONT) for text in record]
                 for record in records]
             table.records = records
             table.create_treeview()
@@ -333,7 +324,7 @@ class Table(tk.Frame):
             self, orient="vertical", command=self.canvas.yview)
         style = ttk.Style()
         style.configure("Treeview.Heading", font=inter(15))
-        style.configure("Treeview", font=inter(11), rowheight=30)
+        style.configure("Treeview", font=TABLE_FONT, rowheight=30)
 
         self.treeview = None
         self.treeview_window = None
@@ -387,7 +378,7 @@ class Table(tk.Frame):
     def edit(self, index: int, record: tuple) -> None:
         """Updates a given record."""
         previous_column_widths = self.get_column_widths()
-        widths = [get_text_width(text + " ", inter(11)) for text in record]
+        widths = [get_text_width(f"{text} ", TABLE_FONT) for text in record]
         self.text_widths[index] = widths
         self.records[index] = record
         new_column_widths = self.get_column_widths()
@@ -809,7 +800,7 @@ class BatchDownloadToplevel(tk.Toplevel):
             self.image = None
         stop = timeit.default_timer()
         time_taken = format_seconds(stop - start)
-        self.logger.log_good(f"Downloading completed in {time_taken}.")
+        self.logger.log_good(f"Downloading completed in {time_taken}")
         self.cancel_button.config(
             text="Close", bg=GREEN, activebackground=GREEN)
     

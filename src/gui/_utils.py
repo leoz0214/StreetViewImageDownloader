@@ -33,7 +33,7 @@ def inter(size: int, bold: bool = False, italic: bool = False) -> tuple:
 def draw_circle(
     canvas: tk.Canvas, x: int, y: int, radius: int, fill: str
 ) -> int:
-    """Utility to draw circle on canvas"""
+    """Utility to draw circle on canvas."""
     return canvas.create_oval(
         x - radius, y - radius, x + radius, y + radius, fill=fill)
 
