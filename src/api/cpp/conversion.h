@@ -3,6 +3,12 @@
 #define CONVERSION_H
 
 
+extern "C" {
+    __declspec(dllexport) void set_cubemap(
+        char* input, int input_width, int input_height, char* output);
+}
+
+
 // Cube faces.
 enum Faces {FRONT, BACK, TOP, BOTTOM, RIGHT, LEFT};
 

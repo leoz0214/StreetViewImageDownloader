@@ -7,6 +7,7 @@ from typing import Union
 
 import batch
 import main
+import rendering
 import save
 from _utils import inter, RED, GREEN, BUTTON_COLOURS, bool_to_state
 from api.url import (
@@ -121,7 +122,8 @@ class UrlInput(tk.Frame):
     """Allows the user to input the URL, with immediate validation."""
 
     def __init__(
-        self, master: Union[UrlDownload, "batch.UrlToplevel"]
+        self, master: Union[
+            UrlDownload, "batch.UrlToplevel", "rendering.PanoramaInput"]
     ) -> None:
         super().__init__(master)
         self._url = tk.StringVar()
@@ -163,8 +165,10 @@ class UrlInput(tk.Frame):
                 self.feedback_label.config(text=e, fg=RED)
         if isinstance(self.master, UrlDownload):
             self.master.update_download_button_state()
-        else:
+        elif isinstance(self.master, batch.UrlToplevel):
             self.master.update_submit_button_state()
+        else:
+            self.master.master.update_start_button_state()
 
 
 class DimensionInput(tk.Frame):

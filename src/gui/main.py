@@ -4,6 +4,7 @@ import tkinter as tk
 import __init__
 import batch
 import panorama_id
+import rendering
 import url
 from _utils import inter, BUTTON_COLOURS
 
@@ -59,7 +60,8 @@ class MainMenu(tk.Frame):
     
     def panorama_rendering(self) -> None:
         """Proceeds to the panorama rendering screen."""
-        # TODO
+        self.destroy()
+        rendering.PanoramaRendering(self.root).pack()
 
 
 class Menu(tk.Menu):

@@ -12,6 +12,7 @@ from PIL import Image
 
 import batch
 import main
+import rendering
 import save
 from _utils import (
     inter, RED, GREEN, BLUE, GREY, BLACK, DARK_BLUE, draw_circle,
@@ -86,7 +87,8 @@ class PanoramaIDInput(tk.Frame):
     """Frame for handling panorama ID input."""
 
     def __init__(
-        self, master: Union[PanoramaDownload, "batch.PanoramaIDToplevel"]
+        self, master: Union[PanoramaDownload,
+            "batch.PanoramaIDToplevel", "rendering.PanoramaInput"]
     ) -> None:
         super().__init__(master)
         self.label = tk.Label(self, font=inter(20), text="Panorama ID:")
@@ -128,8 +130,10 @@ class PanoramaIDInput(tk.Frame):
                 self.feedback_label.config(text="Valid panorama ID.", fg=GREEN)
         if isinstance(self.master, PanoramaDownload):
             self.master.update_download_button_state()
-        else:
+        elif isinstance(self.master, batch.PanoramaIDToplevel):
             self.master.update_submit_button_state()
+        else:
+            self.master.master.update_start_button_state()
 
 
 class PanoramaSettingsInput(tk.Frame):
@@ -378,8 +382,8 @@ class PanoramaDownloadToplevel(tk.Toplevel):
     """
 
     def __init__(
-        self, master: PanoramaDownload, panorama_id: str,
-        settings: PanoramaSettings
+        self, master: Union[PanoramaDownload, rendering.PanoramaRendering],
+        panorama_id: str, settings: PanoramaSettings
     ) -> None:
         super().__init__(master)
         self.title(f"{main.TITLE} - Downloading Panorama...")
@@ -474,5 +478,8 @@ class PanoramaDownloadToplevel(tk.Toplevel):
     def save(self) -> None:
         """Proceeds to the save GUI."""
         self.destroy()
-        self.master.save(self.panorama)
+        if isinstance(self.master, PanoramaDownload):
+            self.master.save(self.panorama)
+        else:
+            self.master.render(self.panorama)
         

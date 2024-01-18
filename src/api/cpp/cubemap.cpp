@@ -1,4 +1,4 @@
-// Decent C++ implementation for the panorama <-> cubemap algorithm.
+// Decent C++ implementation for the panorama -> cubemap algorithm.
 // Adapted from https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
 #include <cmath>
 #include <algorithm>
@@ -24,7 +24,7 @@ inline double atan_approx(double x) {
 
 
 // Decent atan2 approximation (performant, definitely enough).
-inline float atan2_approx(double y, double x) {
+inline double atan2_approx(double y, double x) {
     if (x == 0 && y == 0) {
         return 0;
     }
