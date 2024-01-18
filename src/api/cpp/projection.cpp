@@ -93,7 +93,6 @@ inline double clip(double value, double min, double max) {
 
 // Sets a single output pixel in the overall 2D projection.
 inline void set_output_pixel(
-    char* input, int input_width, int input_height,
     int x, int y, char* output, int width,
     const Matrix& direction, int face_length, char* cubemap = nullptr
 ) {
@@ -151,29 +150,21 @@ inline void set_output_pixel(
             y2 = y1 + half_face_length; x2 = z1 + half_face_length;
     }
     unsigned index = (y * width + (width - x)) * 3;
-    if (cubemap == nullptr) {
-        // Pre-built cubemap unavailable, compute pixel.
-        set_pixel_colour(
-            input, output + index, input_width, input_height, x2, y2, face);
-    } else {
-        // Use pre-built cubemap result..
-        unsigned cubemap_index = (
-            face * face_length * face_length + y2 * face_length + x2) * 3;
-        output[index] = cubemap[cubemap_index];
-        output[index + 1] = cubemap[cubemap_index + 1];
-        output[index + 2] = cubemap[cubemap_index + 2];
-    }
+    // Use pre-built cubemap result..
+    unsigned cubemap_index = (
+        face * face_length * face_length + y2 * face_length + x2) * 3;
+    output[index] = cubemap[cubemap_index];
+    output[index + 1] = cubemap[cubemap_index + 1];
+    output[index + 2] = cubemap[cubemap_index + 2];
 }
 
 
 // Projects a 2D image given the input image, angles, zoom and output,
 // and optionally, a pre-built cubemap to speed up the process.
 void project(
-    char* input, int input_width, int input_height,
     char* output, int output_width, int output_height,
-    double pitch, double yaw, double fov, char* cubemap
+    double pitch, double yaw, double fov, char* cubemap, int face_length
 ) {
-    int face_length = input_width / 4;
     // Conversions converting pitch angle to be CW,
     // and yaw to go from [-90, 90] instead of [0, 180] (also CW).
     pitch = 360 - pitch;
@@ -196,7 +187,6 @@ void project(
             direction(1) += (x1 - prev_x) * transform_matrix(1);
             direction(2) += (x1 - prev_x) * transform_matrix(2);
             set_output_pixel(
-                input, input_width, input_height,
                 x, y, output, output_width, direction, face_length, cubemap);
             prev_x = x1;
         }

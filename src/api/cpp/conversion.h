@@ -5,7 +5,11 @@
 
 extern "C" {
     __declspec(dllexport) void set_cubemap(
-        char* input, int input_width, int input_height, char* output);
+        char* input, int input_width, int input_height,
+        char* output, bool* cancel);
+    __declspec(dllexport) void project(
+        char* output, int output_width, int output_height,
+        double pitch, double yaw, double fov, char* cubemap, int face_length);
 }
 
 
@@ -13,15 +17,11 @@ extern "C" {
 enum Faces {FRONT, BACK, TOP, BOTTOM, RIGHT, LEFT};
 
 
-void set_cubemap(char* input, int w, int h, char* output);
+void set_cubemap(char* input, int w, int h, char* output, bool* cancel);
 void project(
-    char* input, int input_width, int input_height,
     char* output, int output_width, int output_height,
-    double pitch, double yaw, double fov, char* cubemap = nullptr
+    double pitch, double yaw, double fov, char* cubemap, int face_length
 );
-void set_pixel_colour(
-    char* input, char* r, int width, int height, int face_x, int face_y,
-    Faces face
-);
+
 
 #endif

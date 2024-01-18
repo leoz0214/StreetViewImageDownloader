@@ -5,9 +5,10 @@ pitch, yaw and FOV, and subsequently save the cube image.
 """
 import array
 import ctypes
+import threading
 import tkinter as tk
 
-from PIL import Image
+from PIL import Image, ImageTk
 
 import main
 import panorama_id
@@ -22,7 +23,9 @@ from api._utils import _load_cpp_conversion_library
 WIDTH = 512
 HEIGHT = 512
 # C++ functions
-set_cubemap = _load_cpp_conversion_library().set_cubemap
+conversion = _load_cpp_conversion_library()
+set_cubemap = conversion.set_cubemap
+project = conversion.project
 
 
 class PanoramaRendering(tk.Frame):
@@ -152,10 +155,16 @@ class PanoramaRenderingScreen(tk.Frame):
         
         self.title.grid(row=0, column=0, columnspan=3, padx=10, pady=5)
         self.rendering_frame.grid(
-            row=1, column=0, columnspan=2, padx=10, pady=5)
+            row=1, column=0, columnspan=3, padx=10, pady=5)
         self.back_button.grid(row=2, column=0, padx=5, pady=5)
         self.save_button.grid(row=2, column=1, padx=5, pady=5)
         self.home_button.grid(row=2, column=2, padx=5, pady=5)
+    
+    def destroy(self) -> None:
+        """Exists rendering screen."""
+        if self.rendering_frame.tk_image is None:
+            self.rendering_frame.cancel.value = True
+        super().destroy()
     
     def back(self) -> None:
         """Returns back to the previous screen."""
@@ -183,22 +192,56 @@ class PanoramaRenderingFrame(tk.Frame):
     def __init__(self, master: PanoramaRenderingScreen) -> None:
         super().__init__(master)
         self.image = master.panorama
-        self.image_bytes = array.array("b", self.image.tobytes())
-        self.c_image_bytes = (
-            ctypes.c_byte * len(self.image_bytes)
-        ).from_buffer(self.image_bytes)
-        self.image_pointer = ctypes.c_char_p(
-            ctypes.addressof(self.c_image_bytes))
-        self.cubemap_bytes = array.array(
-            "b", bytes((0, 0, 0)) * (self.image.width // 4) ** 2 * 6)
-        self.c_cubemap_bytes = (
-            ctypes.c_byte * len(self.cubemap_bytes)
-        ).from_buffer(self.cubemap_bytes)
-        self.cubemap_pointer = ctypes.c_char_p(
-            ctypes.addressof(self.c_cubemap_bytes))
-        set_cubemap(
-            self.image_pointer, self.image.width,
-            self.image.height, self.cubemap_pointer)
+        self.pil_image = None
+        self.tk_image = None
+        # Allows setup to be cancelled if exited.
+        self.cancel = ctypes.c_bool(False)
         self.yaw = 0 # Horizontal rotation [0, 360).
         self.pitch = 90 # Vertical rotation [1, 179].
         self.fov = 90 # Field of view [15, 90]
+
+        self.image_label = tk.Label(
+            self, text="Generating Cubemap...", font=inter(25))
+        self.image_label.pack(padx=10, pady=5)
+
+        threading.Thread(target=self._set_up_rendering, daemon=True).start()
+
+    def _set_up_rendering(self) -> None:
+        image_bytes = array.array("b", self.image.tobytes())
+        self.c_image_bytes = (
+            ctypes.c_byte * len(image_bytes)).from_buffer(image_bytes)
+        self.image_pointer = ctypes.c_char_p(
+            ctypes.addressof(self.c_image_bytes))
+
+        cubemap_bytes = array.array(
+            "b", bytes((0, 0, 0)) * (self.image.width // 4) ** 2 * 6)
+        self.c_cubemap_bytes = (
+            ctypes.c_byte * len(cubemap_bytes)).from_buffer(cubemap_bytes)
+        self.cubemap_pointer = ctypes.c_char_p(
+            ctypes.addressof(self.c_cubemap_bytes))
+        cancel_pointer = ctypes.POINTER(ctypes.c_bool)(self.cancel)
+        set_cubemap(
+            self.image_pointer, self.image.width,
+            self.image.height, self.cubemap_pointer, cancel_pointer)
+        if self.cancel:
+            return
+                
+        projection_bytes = array.array("b", bytes((0, 0, 0)) * WIDTH * HEIGHT)
+        self.c_projection_bytes = (
+            ctypes.c_byte * len(projection_bytes)
+        ).from_buffer(projection_bytes)
+        self.projection_pointer = ctypes.c_char_p(
+            ctypes.addressof(self.c_projection_bytes))
+
+        self.display()
+
+    def display(self) -> None:
+        """Displays the image with the current yaw, pitch and fov."""
+        project(
+            self.projection_pointer, WIDTH, HEIGHT, ctypes.c_double(self.yaw),
+            ctypes.c_double(self.pitch), ctypes.c_double(self.fov),
+            self.cubemap_pointer, self.image.width // 4)
+        self.pil_image = Image.frombytes(
+            "RGB", (WIDTH, HEIGHT), self.c_projection_bytes)
+        self.tk_image = ImageTk.PhotoImage(self.pil_image)
+        self.image_label.config(image=self.tk_image)

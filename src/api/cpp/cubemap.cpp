@@ -28,9 +28,12 @@ inline double atan2_approx(double y, double x) {
     if (x == 0 && y == 0) {
         return 0;
     }
+    if (y == -1 && x == 0) {
+        return -M_PI_2;
+    }
     // Ensure input is in [-1, +1]
     bool swap = std::abs(x) < std::abs(y);
-    double atan_input = (swap ? x : y) / (swap ? y : x);
+    double atan_input = swap ? x / y : y / x;
     // Approximate atan
     double res = atan_approx(atan_input);
     // If swapped, adjust atan output
@@ -118,47 +121,19 @@ void set_pixel_colour(
 }
 
 
-// Sets a single pixel's colour based on its cubemap position.
-void set_pixel_colour(
-    char* input, char* r, int width, int height,
-    int face_x, int face_y, Faces face
-) {
-    int edge_length = width / 4;
-    int x, y;
-    double theta, phi, u, v;
-    int ui, vi, mu, nu;
-    switch (face) {
-        case FRONT:
-            x = face_x + edge_length * 2; y = face_y + edge_length;
-            break;
-        case BACK:
-            x = face_x; y = face_y + edge_length;
-            break;
-        case TOP:
-            x = face_x + edge_length * 2; y = face_y + edge_length * 2;
-            break;
-        case BOTTOM:
-            x = face_x + edge_length * 2; y = face_y;
-            break;
-        case RIGHT:
-            x = face_x + edge_length * 3; y = face_y + edge_length;
-            break;
-        case LEFT:
-            x = face_x + edge_length; y = face_y + edge_length;
-    }
-    set_pixel_colour(input, x, y, edge_length, width, height, face, r);
-}
-
-
 // Computes an entire cubemap (entirety of all 6 faces).
 void set_cubemap(
-    char* input, int input_width, int input_height, char* output
+    char* input, int input_width, int input_height, char* output, bool* cancel
 ) {
     int edge_length = input_width / 4;
     Faces face, face2;
     int start, stop;
     unsigned index;
     for (int x = 0; x < input_width; ++x) {
+        if (*cancel) {
+            // Cancelled from Python side.
+            return;
+        }
         start = edge_length;
         stop = edge_length * 2;
         switch (x / edge_length) {
