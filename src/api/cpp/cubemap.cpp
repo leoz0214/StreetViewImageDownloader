@@ -94,7 +94,7 @@ inline int clip(int value, int min, int max) {
 
 
 // Calculates pixel colour and sets it (for reuse)
-void set_pixel_colour(
+inline void set_pixel_colour(
     char* input, int x, int y, int edge_length,
     int width, int height, Faces face, char* r
 ) {

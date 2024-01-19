@@ -56,3 +56,8 @@ def format_seconds(seconds: float) -> str:
     minutes = str(seconds % 3600 // 60).zfill(2)
     seconds = str(seconds % 60).zfill(2)
     return f"{hours}:{minutes}:{seconds}"
+
+
+def int_if_possible(float_: float) -> int | float:
+    """Converts a float to an integer if it is indeed an integer."""
+    return int(float_) if float_ % 1 == 0 else float_

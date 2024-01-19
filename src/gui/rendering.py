@@ -7,15 +7,18 @@ import array
 import ctypes
 import threading
 import tkinter as tk
+from tkinter import filedialog
+from tkinter import messagebox
 
 from PIL import Image, ImageTk
 
 import main
 import panorama_id
 import url
-from _utils import inter, BUTTON_COLOURS, GREEN, bool_to_state
+from _utils import inter, BUTTON_COLOURS, GREEN, bool_to_state, int_if_possible
 from api.panorama import PanoramaSettings
-from api.url import parse_url
+from api.url import (
+    parse_url, MIN_YAW, MAX_YAW, MIN_PITCH, MAX_PITCH, MIN_FOV, MAX_FOV)
 from api._utils import _load_cpp_conversion_library
 
 
@@ -26,6 +29,9 @@ HEIGHT = 512
 conversion = _load_cpp_conversion_library()
 set_cubemap = conversion.set_cubemap
 project = conversion.project
+
+MAX_FLOAT_INPUT_LENGTH = 10
+SCROLL_FOV_CHANGE = 10
 
 
 class PanoramaRendering(tk.Frame):
@@ -148,7 +154,7 @@ class PanoramaRenderingScreen(tk.Frame):
             **BUTTON_COLOURS, command=self.back)
         self.save_button = tk.Button(
             self, font=inter(20), text="Save", width=15,
-            **BUTTON_COLOURS, command=self.save)
+            **BUTTON_COLOURS, command=self.save, state="disabled")
         self.home_button = tk.Button(
             self, font=inter(20), text="Home", width=15,
             **BUTTON_COLOURS, command=self.home)
@@ -173,7 +179,15 @@ class PanoramaRenderingScreen(tk.Frame):
     
     def save(self) -> None:
         """Save the image in the current pitch, yaw and FOV."""
-        # TODO
+        file = filedialog.asksaveasfilename(
+            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),))
+        if not file:
+            return
+        try:
+            self.rendering_frame.pil_image.save(file, format="jpeg")
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Unfortunately, an error has occurred: {e}")
     
     def home(self) -> None:
         """Returns back to the main menu."""
@@ -203,6 +217,7 @@ class PanoramaRenderingFrame(tk.Frame):
         self.image_label = tk.Label(
             self, text="Generating Cubemap...", font=inter(25))
         self.image_label.pack(padx=10, pady=5)
+        self.image_label.bind("<MouseWheel>", self.scroll)
 
         threading.Thread(target=self._set_up_rendering, daemon=True).start()
 
@@ -234,6 +249,9 @@ class PanoramaRenderingFrame(tk.Frame):
             ctypes.addressof(self.c_projection_bytes))
 
         self.display()
+        self.rendering_inputs = RenderingInputs(self)
+        self.rendering_inputs.pack(padx=10, pady=5)
+        self.master.save_button.config(state="normal")
 
     def display(self) -> None:
         """Displays the image with the current yaw, pitch and fov."""
@@ -245,3 +263,112 @@ class PanoramaRenderingFrame(tk.Frame):
             "RGB", (WIDTH, HEIGHT), self.c_projection_bytes)
         self.tk_image = ImageTk.PhotoImage(self.pil_image)
         self.image_label.config(image=self.tk_image)
+    
+    def scroll(self, event: tk.Event) -> None:
+        """Scrolls the image to zoom in and out."""
+        previous_fov = self.fov
+        if event.delta > 0:
+            # Zoom in
+            self.fov = max(self.fov - SCROLL_FOV_CHANGE, MIN_FOV)
+        else:
+            # Zoom out
+            self.fov = min(self.fov + SCROLL_FOV_CHANGE, MAX_FOV)
+        x_from_centre = event.x - WIDTH // 2
+        y_from_centre = event.y - HEIGHT // 2
+        fov_change = self.fov - previous_fov
+        yaw_adjustment = -(fov_change / 2) * (x_from_centre / (WIDTH // 2))
+        pitch_adjustment = (fov_change / 2) * (y_from_centre / (HEIGHT // 2))
+        self.yaw = round((self.yaw + yaw_adjustment) % MAX_YAW, 2)
+        self.pitch = max(
+            min(round(self.pitch + pitch_adjustment, 2), MAX_PITCH), MIN_PITCH)
+        self.display()
+        self.rendering_inputs.synchronise()
+
+
+class RenderingInputs(tk.Frame):
+    """
+    Entries to allow the user to set the yaw,
+    pitch and FOV directly, by numeric input.
+    """
+
+    def __init__(self, master: PanoramaRenderingFrame) -> None:
+        super().__init__(master)
+        self.yaw_label = tk.Label(self, font=inter(15), text="Yaw:")
+        self.yaw_input = RenderingInput(
+            self, master.yaw, MIN_YAW, MAX_YAW - 0.000001, "yaw")
+        self.pitch_label = tk.Label(self, font=inter(15), text="Pitch:")
+        self.pitch_input = RenderingInput(
+            self, master.pitch, MIN_PITCH, MAX_PITCH, "pitch")
+        self.fov_label = tk.Label(self, font=inter(15), text="FOV:")
+        self.fov_input = RenderingInput(
+            self, master.fov, MIN_FOV, MAX_FOV, "fov")
+
+        self.yaw_label.grid(row=0, column=0, padx=5, pady=5)
+        self.yaw_input.grid(row=0, column=1, padx=5, pady=5)
+        self.pitch_label.grid(row=0, column=2, padx=5, pady=5)
+        self.pitch_input.grid(row=0, column=3, padx=5, pady=5)
+        self.fov_label.grid(row=0, column=4, padx=5, pady=5)
+        self.fov_input.grid(row=0, column=5, padx=5, pady=5)
+    
+    def update_display(self, name: str, value: float) -> None:
+        """Updates the display based on yaw/pitch/FOV change."""
+        setattr(self.master, name, value)
+        self.master.display()
+    
+    def synchronise(self) -> None:
+        """Synchronises values with current live values."""
+        yaw = int_if_possible(self.master.yaw)
+        pitch = int_if_possible(self.master.pitch)
+        fov = int_if_possible(self.master.fov)
+        self.yaw_input.value = yaw
+        self.pitch_input.value = pitch
+        self.fov_input.value = fov
+
+
+class RenderingInput(tk.Entry):
+    """Entry for one of the rendering inputs (yaw/pitch/FOV)."""
+
+    def __init__(
+        self, master: RenderingInputs, initial_value: float,
+        minimum: int, maximum: int, name: str
+    ) -> None:
+        self.variable = tk.StringVar(value=initial_value)
+        self.variable.trace_add("write", lambda *_: self.validate())
+        self.previous = initial_value
+        self.min = minimum
+        self.max = maximum
+        self.setting = False
+        self.name = name
+        super().__init__(
+            master, font=inter(15), width=5, textvariable=self.variable)
+    
+    @property
+    def value(self) -> float:
+        return float(self.variable.get())
+    
+    @value.setter
+    def value(self, value: float) -> None:
+        self.setting = True
+        self.variable.set(value)
+        self.setting = False
+
+    def validate(self) -> None:
+        """
+        Validates the new variable value,
+        reverting if not a valid decimal number (all digits, max one period).
+        """
+        if self.setting:
+            return
+        value = self.variable.get()
+        if value in ("", "."):
+            self.previous = value
+            return
+        if (
+            len(value) > MAX_FLOAT_INPUT_LENGTH
+            or value.count(".") > 1 or not value.replace(".", "").isdigit()
+        ):
+            self.variable.set(value=self.previous)
+            return
+        if self.min <= self.value <= self.max:
+            self.master.update_display(self.name, self.value)
+        self.previous = value

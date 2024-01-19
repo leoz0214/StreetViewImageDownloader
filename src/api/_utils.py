@@ -3,7 +3,7 @@ import ctypes
 import pathlib
 
 
-CPP_CONVERSION_LIBARY = pathlib.Path(__file__).parent / "cpp" / "conversion.so"
+CPP_CONVERSION_LIBRARY = pathlib.Path(__file__).parent / "cpp/conversion.so"
 
 
 def _split_array(array: list, parts: int) -> list[list]:
@@ -21,4 +21,4 @@ def _split_array(array: list, parts: int) -> list[list]:
 
 
 def _load_cpp_conversion_library() -> ctypes.CDLL:
-    return ctypes.CDLL(str(CPP_CONVERSION_LIBARY))
+    return ctypes.CDLL(str(CPP_CONVERSION_LIBRARY))

@@ -311,12 +311,14 @@ def _combine_tiles(
     for y in range(height - 1, -1, -1):
         if gui is not None and gui.cancelled:
             raise RuntimeError
-        if any(any(pixels[x_, y]) for x_ in range(width)):
+        # Check intervals of 5 pixels (in reality, at least one)
+        # non-black pixel will be found if not a fully black row.
+        if any(any(pixels[x_, y]) for x_ in range(0, width, 5)):
             break
     for x in range(width - 1, -1, -1):
         if gui is not None and gui.cancelled:
             raise RuntimeError
-        if any(any(pixels[x, y_]) for y_ in range(height)):
+        if any(any(pixels[x, y_]) for y_ in range(0, height, 5)):
             break
     if x == width - 1 and y == height - 1:
         return image
