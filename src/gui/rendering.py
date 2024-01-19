@@ -32,6 +32,8 @@ project = conversion.project
 
 MAX_FLOAT_INPUT_LENGTH = 10
 SCROLL_FOV_CHANGE = 10
+YAW_MULTIPLIER_CONSTANT = 1.4
+PITCH_MULTIPLIER_CONSTANT = 1.4
 
 
 class PanoramaRendering(tk.Frame):
@@ -213,11 +215,11 @@ class PanoramaRenderingFrame(tk.Frame):
         self.yaw = 0 # Horizontal rotation [0, 360).
         self.pitch = 90 # Vertical rotation [1, 179].
         self.fov = 90 # Field of view [15, 90]
+        self.previous_drag_coordinates = None
 
         self.image_label = tk.Label(
             self, text="Generating Cubemap...", font=inter(25))
         self.image_label.pack(padx=10, pady=5)
-        self.image_label.bind("<MouseWheel>", self.scroll)
 
         threading.Thread(target=self._set_up_rendering, daemon=True).start()
 
@@ -253,6 +255,10 @@ class PanoramaRenderingFrame(tk.Frame):
         self.rendering_inputs.pack(padx=10, pady=5)
         self.master.save_button.config(state="normal")
 
+        self.image_label.bind("<MouseWheel>", self.scroll)
+        self.image_label.bind("<B1-Motion>", self.drag)
+        self.image_label.bind("<ButtonRelease-1>", lambda *_: self.release())
+
     def display(self) -> None:
         """Displays the image with the current yaw, pitch and fov."""
         project(
@@ -265,7 +271,7 @@ class PanoramaRenderingFrame(tk.Frame):
         self.image_label.config(image=self.tk_image)
     
     def scroll(self, event: tk.Event) -> None:
-        """Scrolls the image to zoom in and out."""
+        """Scrolls the mouse to zoom in and out (change FOV)."""
         previous_fov = self.fov
         if event.delta > 0:
             # Zoom in
@@ -276,11 +282,36 @@ class PanoramaRenderingFrame(tk.Frame):
         x_from_centre = event.x - WIDTH // 2
         y_from_centre = event.y - HEIGHT // 2
         fov_change = self.fov - previous_fov
-        yaw_adjustment = -(fov_change / 2) * (x_from_centre / (WIDTH // 2))
-        pitch_adjustment = (fov_change / 2) * (y_from_centre / (HEIGHT // 2))
-        self.yaw = round((self.yaw + yaw_adjustment) % MAX_YAW, 2)
+        yaw_increase = -(fov_change / 2) * (x_from_centre / (WIDTH // 2))
+        pitch_increase = (fov_change / 2) * (y_from_centre / (HEIGHT // 2))
+        self.adjust_yaw_and_pitch(yaw_increase, pitch_increase)
+    
+    def drag(self, event: tk.Event) -> None:
+        """Allows the panorama to be dragged to alter the yaw and pitch."""
+        if self.previous_drag_coordinates is None:
+            self.previous_drag_coordinates = (event.x, event.y)
+            return
+        x_change = event.x - self.previous_drag_coordinates[0]
+        y_change = event.y - self.previous_drag_coordinates[1]
+        yaw_increase = -x_change * self.fov / WIDTH * YAW_MULTIPLIER_CONSTANT
+        pitch_increase = (
+            y_change * self.fov / HEIGHT * PITCH_MULTIPLIER_CONSTANT)
+        self.adjust_yaw_and_pitch(yaw_increase, pitch_increase)
+        self.previous_drag_coordinates = (event.x, event.y)
+    
+    def release(self) -> None:
+        """Mouse dragging terminated."""
+        self.previous_drag_coordinates = None
+    
+    def adjust_yaw_and_pitch(
+        self, yaw_increase: float, pitch_increase: float
+    ) -> None:
+        """Increases/decreases yaw and pitch by a given value."""
+        # Keep yaw in valid range (using modulus).
+        self.yaw = round((self.yaw + yaw_increase) % MAX_YAW, 2)
+        # Keep pitch in valid range (clipping).
         self.pitch = max(
-            min(round(self.pitch + pitch_adjustment, 2), MAX_PITCH), MIN_PITCH)
+            min(round(self.pitch + pitch_increase, 2), MAX_PITCH), MIN_PITCH)
         self.display()
         self.rendering_inputs.synchronise()
 

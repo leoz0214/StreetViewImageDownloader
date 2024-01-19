@@ -98,19 +98,15 @@ inline void set_pixel_colour(
     char* input, int x, int y, int edge_length,
     int width, int height, Faces face, char* r
 ) {
-    double theta, phi, u, v, mu, nu;
-    int ui, vi;
     coordinates.set(x, y, face, edge_length);
-    theta = atan2_approx(coordinates.y, coordinates.x);
-    phi = atan2_approx(
+    double u = 2 * edge_length * (atan2_approx(coordinates.y, coordinates.x) + M_PI) / M_PI;
+    double v = 2 * edge_length * (M_PI_2 - atan2_approx(
         coordinates.z,
-        std::sqrt(coordinates.x * coordinates.x + coordinates.y * coordinates.y));
-    u = 2 * edge_length * (theta + M_PI) / M_PI;
-    v = 2 * edge_length * (M_PI_2 - phi) / M_PI;
-    ui = floor(u);
-    vi = floor(v);
-    mu = u - ui;
-    nu = v - vi;
+        std::sqrt(coordinates.x * coordinates.x + coordinates.y * coordinates.y))) / M_PI;
+    int ui = floor(u);
+    int vi = floor(v);
+    double mu = u - ui;
+    double nu = v - vi;
     a.set(input, ui % width, clip(vi, 0, height - 1), width);
     b.set(input, (ui + 1) % width, clip(vi, 0, height - 1), width);
     c.set(input, ui % width, clip(vi + 1, 0, height - 1), width);
@@ -146,14 +142,9 @@ void set_cubemap(
                 break;
             case 3: face = RIGHT;
         }
+        Faces faces[3] {face, BOTTOM, TOP};
         for (int y = start; y < stop; ++y) {
-            if (y < edge_length) {
-                face2 = BOTTOM; 
-            } else if (y >= edge_length * 2) {
-                face2 = TOP;
-            } else {
-                face2 = face;
-            }
+            face2 = faces[(y < edge_length) + 2 * (y >= edge_length * 2)];
             switch (face2) {
                 case FRONT:
                     index = ((y - edge_length) * edge_length + x - edge_length * 2) * 3;

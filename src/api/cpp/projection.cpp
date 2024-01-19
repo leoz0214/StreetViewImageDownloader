@@ -94,61 +94,61 @@ inline double clip(double value, double min, double max) {
 // Sets a single output pixel in the overall 2D projection.
 inline void set_output_pixel(
     int x, int y, char* output, int width,
-    const Matrix& direction, int face_length, char* cubemap = nullptr
+    const Matrix& direction, int face_length, char* cubemap
 ) {
     int half_face_length = face_length / 2;
-    double x1, y1, z1, abs_max, abs_x, abs_y, abs_z;
+    double x1, y1, z1, abs_max, abs_x, abs_y, abs_z, lambda;
     x1 = direction(0); y1 = direction(1); z1 = direction(2);
     abs_x = std::abs(x1); abs_y = std::abs(y1); abs_z = std::abs(z1);
     Faces face;
     // Determines first face that is hit going in a given direction.
-    if (abs_x > abs_y && abs_x > abs_z) {
-        face = x1 > 0 ? RIGHT : LEFT;
-        abs_max = abs_x;
-    } else if (abs_y > abs_x && abs_y > abs_z) {
-        face = y1 > 0 ? TOP : BOTTOM;
-        abs_max = abs_y;
-    } else {
-        face = z1 > 0 ? FRONT : BACK;
-        abs_max = abs_z;
-    }
-    double lambda = half_face_length / abs_max;
     // Transforms direction column vector to the point of intersection
     // of line and face plane.
-    x1 *= lambda; y1 *= lambda; z1 *= lambda;
     int x2, y2;
-
-    switch (face) {
-        case FRONT:
-            x1 = round(clip(x1, -half_face_length, half_face_length - 1));
-            y1 = round(clip(y1, -half_face_length, half_face_length - 1));
-            x2 = x1 + half_face_length; y2 = y1 + half_face_length;
-            break;
-        case BACK:
-            x1 = round(clip(x1, -half_face_length + 1, half_face_length));
-            y1 = round(clip(y1, -half_face_length, half_face_length - 1));
-            x2 = half_face_length - x1; y2 = y1 + half_face_length;
-            break;
-        case TOP:
-            x1 = round(clip(x1, -half_face_length, half_face_length - 1));
-            z1 = round(clip(z1, -half_face_length + 1, half_face_length));
-            x2 = x1 + half_face_length; y2 = half_face_length - z1;
-            break;
-        case BOTTOM:
-            x1 = round(clip(x1, -half_face_length, half_face_length - 1));
-            z1 = round(clip(z1, -half_face_length, half_face_length - 1));
-            x2 = x1 + half_face_length; y2 = z1 + half_face_length;
-            break;
-        case RIGHT:
-            y1 = round(clip(y1, -half_face_length, half_face_length - 1));
-            z1 = round(clip(z1, -half_face_length + 1, half_face_length));
+    if (abs_x > abs_y && abs_x > abs_z) {
+        face = x1 > 0 ? RIGHT : LEFT;
+        lambda = half_face_length / abs_x;
+        if (face == RIGHT) {
+            // Right
+            y1 = round(clip(y1 * lambda, -half_face_length, half_face_length - 1));
+            z1 = round(clip(z1 * lambda, -half_face_length + 1, half_face_length));
             y2 = y1 + half_face_length; x2 = half_face_length - z1;
-            break;
-        case LEFT:
-            y1 = round(clip(y1, -half_face_length, half_face_length - 1));
-            z1 = round(clip(z1, -half_face_length, half_face_length - 1));
-            y2 = y1 + half_face_length; x2 = z1 + half_face_length;
+        } else {
+            // Left
+            y1 = round(clip(y1 * lambda, -half_face_length, half_face_length - 1));
+            z1 = round(clip(z1 * lambda, -half_face_length, half_face_length - 1));
+            y2 = y1 + half_face_length; x2 = z1 + half_face_length;  
+        }
+    } else if (abs_y > abs_x && abs_y > abs_z) {
+        face = y1 > 0 ? TOP : BOTTOM;
+        lambda = half_face_length / abs_y;
+        if (face == TOP) {
+            // Top
+            x1 = round(clip(x1 * lambda, -half_face_length, half_face_length - 1));
+            z1 = round(clip(z1 * lambda, -half_face_length + 1, half_face_length));
+            x2 = x1 + half_face_length; y2 = half_face_length - z1;
+        } else {
+            // Bottom
+            x1 = round(clip(x1 * lambda, -half_face_length, half_face_length - 1));
+            z1 = round(clip(z1 * lambda, -half_face_length, half_face_length - 1));
+            x2 = x1 + half_face_length; y2 = z1 + half_face_length;
+        }
+    } else {
+        face = z1 > 0 ? FRONT : BACK;
+        lambda = half_face_length / abs_z;
+        if (face == FRONT) {
+            // Front
+            x1 = round(clip(x1 * lambda, -half_face_length, half_face_length - 1));
+            y1 = round(clip(y1 * lambda, -half_face_length, half_face_length - 1));
+            x2 = x1 + half_face_length; y2 = y1 + half_face_length;
+        } else {
+            // Back
+            x1 = round(clip(x1 * lambda, -half_face_length + 1, half_face_length));
+            y1 = round(clip(y1 * lambda, -half_face_length, half_face_length - 1));
+            x2 = half_face_length - x1; y2 = y1 + half_face_length;
+        }
     }
+
     unsigned index = (y * width + (width - x)) * 3;
     // Use pre-built cubemap result..
     unsigned cubemap_index = (
