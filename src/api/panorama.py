@@ -278,6 +278,40 @@ def get_pil_tiles(
     return [[Image.open(io.BytesIO(tile)) for tile in row] for row in tiles]
 
 
+def _binary_search_black(
+    width: int, height: int, pixels: Image.Image, gui, is_y: bool
+) -> int:
+    # First entirely black row/column in image preceded by one not the case.
+    minimum = 0
+    upper = height - 1 if is_y else width - 1
+    maximum = upper
+    while True:
+        if gui is not None and gui.cancelled:
+            raise RuntimeError
+        v = (minimum + maximum) // 2
+        if is_y:
+            is_black = not any(
+                any(pixels[x, v]) for x in range(0, width, width // 100))
+        else:
+            is_black = not any(
+                any(pixels[v, y]) for y in range(0, height, height // 100))
+        if not is_black:
+            minimum = v + 1
+        elif v == 0:
+            return v
+        elif (
+            (is_y and any(
+                any(pixels[x, v - 1]) for x in range(0, width, width // 100)))
+            or ((not is_y) and any(any(pixels[v - 1, y])
+                for y in range(0, height, height // 100)))
+        ):
+            return v - 1
+        else:
+            maximum = v - 1
+        if minimum > maximum:
+            return upper
+
+
 def _combine_tiles(
     tiles: list[list[bytes]], crop_black_edges: bool, gui = None
 ) -> Image.Image:
@@ -308,18 +342,8 @@ def _combine_tiles(
     if not any(any(pixels[x, y]) for y in range(32) for x in range(32)):
         return image.crop((0, 0, 0, 0))
     # Checks for bottom/right black edges and crops if necessary.
-    for y in range(height - 1, -1, -1):
-        if gui is not None and gui.cancelled:
-            raise RuntimeError
-        # Check intervals of 5 pixels (in reality, at least one)
-        # non-black pixel will be found if not a fully black row.
-        if any(any(pixels[x_, y]) for x_ in range(0, width, 5)):
-            break
-    for x in range(width - 1, -1, -1):
-        if gui is not None and gui.cancelled:
-            raise RuntimeError
-        if any(any(pixels[x, y_]) for y_ in range(0, height, 5)):
-            break
+    x = _binary_search_black(width, height, pixels, gui, False)
+    y = _binary_search_black(width, height, pixels, gui, True)
     if x == width - 1 and y == height - 1:
         return image
     crop_box = (0, 0, x + 1, y + 1)

@@ -77,10 +77,10 @@ class PanoramaDownload(tk.Frame):
             self, self.panorama_id_input.panorama_id,
             self.settings_input.settings)
     
-    def save(self, panorama: Image.Image) -> None:
+    def save(self, panorama: Image.Image, can_render: bool) -> None:
         """Proceeds to the image saving screen."""
         self.pack_forget()
-        save.SaveImageFrame(self.root, self, panorama).pack()
+        save.SaveImageFrame(self.root, self, panorama, can_render).pack()
 
 
 class PanoramaIDInput(tk.Frame):
@@ -479,7 +479,12 @@ class PanoramaDownloadToplevel(tk.Toplevel):
         """Proceeds to the save GUI."""
         self.destroy()
         if isinstance(self.master, PanoramaDownload):
-            self.master.save(self.panorama)
+            # Only render when zoom >= 4 and entire panorama downloaded.
+            can_render = (
+                self.settings.zoom >= 4 and self.settings.top_left == (0, 0)
+                and self.settings.bottom_right
+                    == get_max_coordinates(self.settings.zoom))
+            self.master.save(self.panorama, can_render)
         else:
             self.master.render(self.panorama)
         

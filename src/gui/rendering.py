@@ -47,6 +47,7 @@ class PanoramaRendering(tk.Frame):
         self.title = tk.Label(
             self, font=inter(25, True), text="Panorama Rendering")
         self.panorama_input = PanoramaInput(self)
+        self.zoom_input = PanoramaRenderingZoomInput(self)
         self.back_button = tk.Button(
             self, font=inter(20), text="Back", width=15,
             **BUTTON_COLOURS, command=self.back)
@@ -57,8 +58,9 @@ class PanoramaRendering(tk.Frame):
         self.title.grid(row=0, column=0, columnspan=2, padx=10, pady=5)
         self.panorama_input.grid(
             row=1, column=0, columnspan=2, padx=10, pady=5)
-        self.back_button.grid(row=2, column=0, padx=10, pady=5)
-        self.start_button.grid(row=2, column=1, padx=10, pady=5)
+        self.zoom_input.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
+        self.back_button.grid(row=3, column=0, padx=10, pady=5)
+        self.start_button.grid(row=3, column=1, padx=10, pady=5)
 
     def update_start_button_state(self) -> None:
         """Updates the state of the start button depending on input."""
@@ -73,7 +75,8 @@ class PanoramaRendering(tk.Frame):
     def start(self) -> None:
         """Starts the download and subsequent rendering."""
         _panorama_id = self.panorama_input.panorama_id
-        panorama_settings = PanoramaSettings(zoom=4)
+        zoom = self.zoom_input.zoom
+        panorama_settings = PanoramaSettings(zoom=zoom)
         panorama_id.PanoramaDownloadToplevel(
             self,  _panorama_id, panorama_settings)
     
@@ -134,25 +137,53 @@ class PanoramaInput(tk.Frame):
         self.current_input.pack(padx=5, pady=5)
         if not first:
             self.master.update_start_button_state()
+
+
+class PanoramaRenderingZoomInput(tk.Frame):
+    """
+    Allows the user to either select zoom 4 or 5 (medium or max quality).
+    Zoom 5 is sharper but takes even longer to set up.
+    """
+
+    def __init__(self, master: PanoramaRendering) -> None:
+        super().__init__(master)
+        self._zoom = tk.IntVar(value=4)
+        self.label = tk.Label(self, font=inter(20), text="Zoom:")
+        self.label.grid(row=0, column=0, padx=5, pady=5)
+        for value in range(4, 6):
+            radiobutton = tk.Radiobutton(
+                self, font=inter(20), text=value, width=5,
+                value=value, variable=self._zoom, indicatoron=False,
+                **BUTTON_COLOURS, selectcolor=GREEN)
+            radiobutton.grid(row=0, column=value, padx=5, pady=5)
+    
+    @property
+    def zoom(self) -> int:
+        return self._zoom.get()
         
 
 class PanoramaRenderingScreen(tk.Frame):
     """Main panorama rendering screen, allowing viewing of the panorama."""
 
     def __init__(
-        self, root: tk.Tk, previous_screen: PanoramaRendering,
+        self, root: tk.Tk, previous_screen: tk.Frame,
         panorama: Image.Image
     ) -> None:
         super().__init__(root)
         self.root = root
         self.previous_screen = previous_screen
         self.panorama = panorama
+        self.previous_title = self.root.title()
+        self.previous_menu = self.root.cget("menu")
+        if "Save" in self.previous_title:
+            self.root.title(f"{self.previous_title} - Rendering")
+            self.root.config(menu="")
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Panorama Rendering")
         self.rendering_frame = PanoramaRenderingFrame(self)
         self.back_button = tk.Button(
-            self, font=inter(20), text="Change Panorama", width=15,
+            self, font=inter(20), text="Back", width=15,
             **BUTTON_COLOURS, command=self.back)
         self.save_button = tk.Button(
             self, font=inter(20), text="Save", width=15,
@@ -177,6 +208,8 @@ class PanoramaRenderingScreen(tk.Frame):
     def back(self) -> None:
         """Returns back to the previous screen."""
         self.destroy()
+        self.root.title(self.previous_title)
+        self.root.config(menu=self.previous_menu)
         self.previous_screen.pack()
     
     def save(self) -> None:

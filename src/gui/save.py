@@ -9,6 +9,7 @@ from PIL import Image, ImageTk
 
 import main
 import panorama_id
+import rendering
 from _utils import inter, BUTTON_COLOURS
 
 
@@ -21,7 +22,8 @@ class SaveImageFrame(tk.Frame):
     """Save Image GUI, including an image preview."""
 
     def __init__(
-        self, root: tk.Tk, previous: tk.Frame, image: Image.Image
+        self, root: tk.Tk, previous: tk.Frame, image: Image.Image,
+        can_render_panorama: bool = False
     ) -> None:
         super().__init__(root)
         self.root = root
@@ -47,19 +49,25 @@ class SaveImageFrame(tk.Frame):
         self.save_button = tk.Button(
             self, font=inter(20), text="Save", width=15, **BUTTON_COLOURS,
             command=self.save)
+        self.render_button = tk.Button(
+            self, font=inter(20), text="Render", width=15, **BUTTON_COLOURS,
+            command=self.render)
         self.home_button = tk.Button(
             self, font=inter(20), text="Main Menu", width=15,
             **BUTTON_COLOURS, command=self.home)
         
         self.root.bind("<Control-s>", lambda *_: self.save())
 
-        self.title.grid(row=0, column=0, columnspan=3, padx=10, pady=5)
-        self.image_preview.grid(row=1, column=0, columnspan=3, padx=10, pady=5)
+        self.title.grid(row=0, column=0, columnspan=4, padx=10, pady=5)
+        self.image_preview.grid(row=1, column=0, columnspan=4, padx=10, pady=5)
         self.image_info_label.grid(
-            row=2, column=0, columnspan=3, padx=10, pady=5)
+            row=2, column=0, columnspan=4, padx=10, pady=5)
         self.retry_button.grid(row=3, column=0, padx=(50, 10), pady=5)
         self.save_button.grid(row=3, column=1, padx=10, pady=5)
-        self.home_button.grid(row=3, column=2, padx=(10, 50), pady=5)
+        if can_render_panorama:
+            self.render_button.grid(row=3, column=2, padx=10, pady=5)
+        self.home_button.grid(
+            row=3, column=2 + can_render_panorama, padx=(10, 50), pady=5)
 
     def destroy(self) -> None:
         """Exits the save image screen."""
@@ -84,6 +92,11 @@ class SaveImageFrame(tk.Frame):
         except Exception as e:
             messagebox.showerror(
                 "Error", f"Unfortunately, an error has occurred: {e}")
+            
+    def render(self) -> None:
+        """Proceeds to the rendering screen (panoramas only)."""
+        self.pack_forget()
+        rendering.PanoramaRenderingScreen(self.root, self, self.image).pack()
     
     def home(self) -> None:
         """Returns to the main menu of the program."""
