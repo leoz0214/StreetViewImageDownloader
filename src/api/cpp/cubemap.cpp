@@ -25,11 +25,8 @@ inline double atan_approx(double x) {
 
 // Decent atan2 approximation (performant, definitely enough).
 inline double atan2_approx(double y, double x) {
-    if (x == 0 && y == 0) {
-        return 0;
-    }
-    if (y == -1 && x == 0) {
-        return -M_PI_2;
+    if (x == 0) {
+        return y == 0 ? 0 : y < 0 ? -M_PI_2 : M_PI_2;
     }
     // Ensure input is in [-1, +1]
     bool swap = std::abs(x) < std::abs(y);

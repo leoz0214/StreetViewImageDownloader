@@ -19,17 +19,21 @@ from _utils import inter, BUTTON_COLOURS, GREEN, bool_to_state, int_if_possible
 from api.panorama import PanoramaSettings
 from api.url import (
     parse_url, MIN_YAW, MAX_YAW, MIN_PITCH, MAX_PITCH, MIN_FOV, MAX_FOV)
-from api._utils import _load_cpp_conversion_library
+from api._utils import _load_cpp_conversion_library, _in_rectangle
 
 
 # Projection dimensions (balance between performance and resolution).
-WIDTH = 512
-HEIGHT = 512
+MIN_LENGTH = 64
+MAX_LENGTH = 625
+DEFAULT_LENGTH = 512 
 # C++ functions
 conversion = _load_cpp_conversion_library()
 set_cubemap = conversion.set_cubemap
 project = conversion.project
 
+DEFAULT_YAW = 0
+DEFAULT_PITCH = 90
+DEFAULT_FOV = 90
 MAX_FLOAT_INPUT_LENGTH = 10
 SCROLL_FOV_CHANGE = 10
 YAW_MULTIPLIER_CONSTANT = 1.4
@@ -166,8 +170,7 @@ class PanoramaRenderingScreen(tk.Frame):
     """Main panorama rendering screen, allowing viewing of the panorama."""
 
     def __init__(
-        self, root: tk.Tk, previous_screen: tk.Frame,
-        panorama: Image.Image
+        self, root: tk.Tk, previous_screen: tk.Frame, panorama: Image.Image
     ) -> None:
         super().__init__(root)
         self.root = root
@@ -192,12 +195,12 @@ class PanoramaRenderingScreen(tk.Frame):
             self, font=inter(20), text="Home", width=15,
             **BUTTON_COLOURS, command=self.home)
         
-        self.title.grid(row=0, column=0, columnspan=3, padx=10, pady=5)
+        self.title.grid(row=0, column=0, columnspan=3, padx=10, pady=3)
         self.rendering_frame.grid(
-            row=1, column=0, columnspan=3, padx=10, pady=5)
-        self.back_button.grid(row=2, column=0, padx=5, pady=5)
-        self.save_button.grid(row=2, column=1, padx=5, pady=5)
-        self.home_button.grid(row=2, column=2, padx=5, pady=5)
+            row=1, column=0, columnspan=3, padx=10, pady=3)
+        self.back_button.grid(row=2, column=0, padx=5, pady=3)
+        self.save_button.grid(row=2, column=1, padx=5, pady=3)
+        self.home_button.grid(row=2, column=2, padx=5, pady=3)
     
     def destroy(self) -> None:
         """Exists rendering screen."""
@@ -243,11 +246,12 @@ class PanoramaRenderingFrame(tk.Frame):
         self.image = master.panorama
         self.pil_image = None
         self.tk_image = None
+        self.length = DEFAULT_LENGTH
         # Allows setup to be cancelled if exited.
         self.cancel = ctypes.c_bool(False)
-        self.yaw = 0 # Horizontal rotation [0, 360).
-        self.pitch = 90 # Vertical rotation [1, 179].
-        self.fov = 90 # Field of view [15, 90]
+        self.yaw = DEFAULT_YAW # Horizontal rotation [0, 360).
+        self.pitch = DEFAULT_PITCH # Vertical rotation [1, 179].
+        self.fov = DEFAULT_FOV # Field of view [15, 90]
         self.previous_drag_coordinates = None
 
         self.image_label = tk.Label(
@@ -255,6 +259,10 @@ class PanoramaRenderingFrame(tk.Frame):
         self.image_label.pack(padx=10, pady=5)
 
         threading.Thread(target=self._set_up_rendering, daemon=True).start()
+    
+    @property
+    def offset(self) -> int:
+        return MAX_LENGTH // 2 - self.length // 2
 
     def _set_up_rendering(self) -> None:
         image_bytes = array.array("b", self.image.tobytes())
@@ -275,15 +283,8 @@ class PanoramaRenderingFrame(tk.Frame):
             self.image.height, self.cubemap_pointer, cancel_pointer)
         if self.cancel:
             return
-                
-        projection_bytes = array.array("b", bytes((0, 0, 0)) * WIDTH * HEIGHT)
-        self.c_projection_bytes = (
-            ctypes.c_byte * len(projection_bytes)
-        ).from_buffer(projection_bytes)
-        self.projection_pointer = ctypes.c_char_p(
-            ctypes.addressof(self.c_projection_bytes))
 
-        self.display()
+        self.display(True)
         self.rendering_inputs = RenderingInputs(self)
         self.rendering_inputs.pack(padx=10, pady=5)
         self.master.save_button.config(state="normal")
@@ -292,19 +293,35 @@ class PanoramaRenderingFrame(tk.Frame):
         self.image_label.bind("<B1-Motion>", self.drag)
         self.image_label.bind("<ButtonRelease-1>", lambda *_: self.release())
 
-    def display(self) -> None:
+    def display(self, new_size: bool = False) -> None:
         """Displays the image with the current yaw, pitch and fov."""
+        if new_size:
+            # Only create new projection bytes if the size is changed
+            # (first display or subsequent size change).
+            # Does not run this every time the pitch/yaw/FOV changes.
+            self.projection_bytes = array.array(
+                "b", bytes((0, 0, 0)) * self.length ** 2)
+            self.c_projection_bytes = (
+                ctypes.c_byte * len(self.projection_bytes)
+            ).from_buffer(self.projection_bytes)
+            self.projection_pointer = ctypes.c_char_p(
+                ctypes.addressof(self.c_projection_bytes))
         project(
-            self.projection_pointer, WIDTH, HEIGHT, ctypes.c_double(self.yaw),
+            self.projection_pointer, self.length, self.length, ctypes.c_double(self.yaw),
             ctypes.c_double(self.pitch), ctypes.c_double(self.fov),
             self.cubemap_pointer, self.image.width // 4)
         self.pil_image = Image.frombytes(
-            "RGB", (WIDTH, HEIGHT), self.c_projection_bytes)
+            "RGB", (self.length, self.length), self.c_projection_bytes)
         self.tk_image = ImageTk.PhotoImage(self.pil_image)
-        self.image_label.config(image=self.tk_image)
+        self.image_label.config(
+            width=MAX_LENGTH, height=MAX_LENGTH, font=None, image=self.tk_image)
     
     def scroll(self, event: tk.Event) -> None:
         """Scrolls the mouse to zoom in and out (change FOV)."""
+        x = event.x - self.offset
+        y = event.y - self.offset
+        if not _in_rectangle((0, 0), (self.length, self.length), (x, y)):
+            return
         previous_fov = self.fov
         if event.delta > 0:
             # Zoom in
@@ -312,23 +329,29 @@ class PanoramaRenderingFrame(tk.Frame):
         else:
             # Zoom out
             self.fov = min(self.fov + SCROLL_FOV_CHANGE, MAX_FOV)
-        x_from_centre = event.x - WIDTH // 2
-        y_from_centre = event.y - HEIGHT // 2
+        x_from_centre = x - self.length // 2
+        y_from_centre = y - self.length // 2 
         fov_change = self.fov - previous_fov
-        yaw_increase = -(fov_change / 2) * (x_from_centre / (WIDTH // 2))
-        pitch_increase = (fov_change / 2) * (y_from_centre / (HEIGHT // 2))
+        yaw_increase = -(fov_change / 2) * (x_from_centre / (self.length // 2))
+        pitch_increase = (fov_change / 2) * (y_from_centre / (self.length // 2))
         self.adjust_yaw_and_pitch(yaw_increase, pitch_increase)
     
     def drag(self, event: tk.Event) -> None:
         """Allows the panorama to be dragged to alter the yaw and pitch."""
         if self.previous_drag_coordinates is None:
+            image_coordinates = (event.x - self.offset, event.y - self.offset)
+            if not _in_rectangle(
+                (0, 0), (self.length, self.length), image_coordinates
+            ):
+                return
             self.previous_drag_coordinates = (event.x, event.y)
             return
         x_change = event.x - self.previous_drag_coordinates[0]
         y_change = event.y - self.previous_drag_coordinates[1]
-        yaw_increase = -x_change * self.fov / WIDTH * YAW_MULTIPLIER_CONSTANT
+        yaw_increase = (
+            -x_change * self.fov / self.length * YAW_MULTIPLIER_CONSTANT)
         pitch_increase = (
-            y_change * self.fov / HEIGHT * PITCH_MULTIPLIER_CONSTANT)
+            y_change * self.fov / self.length * PITCH_MULTIPLIER_CONSTANT)
         self.adjust_yaw_and_pitch(yaw_increase, pitch_increase)
         self.previous_drag_coordinates = (event.x, event.y)
     
@@ -352,11 +375,14 @@ class PanoramaRenderingFrame(tk.Frame):
 class RenderingInputs(tk.Frame):
     """
     Entries to allow the user to set the yaw,
-    pitch and FOV directly, by numeric input.
+    pitch and FOV directly, by numeric input, alongside image length.
     """
 
     def __init__(self, master: PanoramaRenderingFrame) -> None:
         super().__init__(master)
+        self.length_input = url.DimensionInput(
+            self, "Width/Height:", MIN_LENGTH, MAX_LENGTH, DEFAULT_LENGTH,
+            length=600, label_width=12, font_size=15)
         self.yaw_label = tk.Label(self, font=inter(15), text="Yaw:")
         self.yaw_input = RenderingInput(
             self, master.yaw, MIN_YAW, MAX_YAW - 0.000001, "yaw")
@@ -367,17 +393,18 @@ class RenderingInputs(tk.Frame):
         self.fov_input = RenderingInput(
             self, master.fov, MIN_FOV, MAX_FOV, "fov")
 
-        self.yaw_label.grid(row=0, column=0, padx=5, pady=5)
-        self.yaw_input.grid(row=0, column=1, padx=5, pady=5)
-        self.pitch_label.grid(row=0, column=2, padx=5, pady=5)
-        self.pitch_input.grid(row=0, column=3, padx=5, pady=5)
-        self.fov_label.grid(row=0, column=4, padx=5, pady=5)
-        self.fov_input.grid(row=0, column=5, padx=5, pady=5)
+        self.length_input.grid(row=0, column=0, columnspan=6, padx=5, pady=3)
+        self.yaw_label.grid(row=1, column=0, padx=5, pady=3, sticky="e")
+        self.yaw_input.grid(row=1, column=1, padx=5, pady=3, sticky="w")
+        self.pitch_label.grid(row=1, column=2, padx=5, pady=3, sticky="e")
+        self.pitch_input.grid(row=1, column=3, padx=5, pady=3, sticky="w")
+        self.fov_label.grid(row=1, column=4, padx=5, pady=3, sticky="e")
+        self.fov_input.grid(row=1, column=5, padx=5, pady=3, sticky="w")
     
-    def update_display(self, name: str, value: float) -> None:
+    def update_display(self, name: str, value: int | float) -> None:
         """Updates the display based on yaw/pitch/FOV change."""
         setattr(self.master, name, value)
-        self.master.display()
+        self.master.display(name == "length")
     
     def synchronise(self) -> None:
         """Synchronises values with current live values."""
@@ -404,7 +431,7 @@ class RenderingInput(tk.Entry):
         self.setting = False
         self.name = name
         super().__init__(
-            master, font=inter(15), width=5, textvariable=self.variable)
+            master, font=inter(15), width=6, textvariable=self.variable)
     
     @property
     def value(self) -> float:

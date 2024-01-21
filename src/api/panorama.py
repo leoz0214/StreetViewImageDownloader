@@ -15,9 +15,9 @@ import requests as rq
 from PIL import Image
 
 try:
-    from api._utils import _split_array
+    from api._utils import _split_array, _in_rectangle
 except ImportError:
-    from _utils import _split_array
+    from _utils import _split_array, _in_rectangle
 
 
 MIN_ZOOM = 0
@@ -31,6 +31,7 @@ MAX_RETRIES = 2
 MAX_ASYNC_COROUTINES = 8
 TILE_WIDTH = 512
 TILE_HEIGHT = 512
+MAX_BLACK = (5, 5, 5)
 
 
 def get_max_coordinates(zoom: int) -> tuple[int, int]:
@@ -45,16 +46,6 @@ def validate_coordinates(coordinates: tuple[int, int]) -> None:
         raise TypeError("Coordinates must be a 2-tuple.")
     if not all(isinstance(value, int) for value in coordinates):
         raise TypeError("Coordinates must have integer points only.")
-
-
-def in_rectangle(
-    top_left: tuple[int, int], bottom_right: tuple[int, int],
-    coordinates: tuple[int, int]
-) -> bool:
-    """Returns True if coordinates lie in a given rectangle, else False."""
-    return (
-        top_left[0] <= coordinates[0] <= bottom_right[0]
-        and top_left[1] <= coordinates[1] <= bottom_right[1])
 
 
 class PanoramaSettings:
@@ -94,7 +85,7 @@ class PanoramaSettings:
     
     def _set_top_left(self, top_left: tuple[int, int]) -> None:
         validate_coordinates(top_left)
-        if not in_rectangle(
+        if not _in_rectangle(
             MIN_COORDINATES, get_max_coordinates(self.zoom), top_left
         ):
             raise ValueError("Top-left coordinates out of bounds.")
@@ -102,7 +93,7 @@ class PanoramaSettings:
 
     def _set_bottom_right(self, bottom_right: tuple[int, int]) -> None:
         validate_coordinates(bottom_right)
-        if not in_rectangle(
+        if not _in_rectangle(
             MIN_COORDINATES, get_max_coordinates(self.zoom), bottom_right
         ):
             raise ValueError("Bottom-right coordinates out of bounds.")
@@ -291,18 +282,22 @@ def _binary_search_black(
         v = (minimum + maximum) // 2
         if is_y:
             is_black = not any(
-                any(pixels[x, v]) for x in range(0, width, width // 100))
+                pixels[x, v] > MAX_BLACK
+                for x in range(0, width, width // 100))
         else:
             is_black = not any(
-                any(pixels[v, y]) for y in range(0, height, height // 100))
+                pixels[v, y] > MAX_BLACK
+                for y in range(0, height, height // 100))
         if not is_black:
             minimum = v + 1
         elif v == 0:
             return v
         elif (
             (is_y and any(
-                any(pixels[x, v - 1]) for x in range(0, width, width // 100)))
-            or ((not is_y) and any(any(pixels[v - 1, y])
+                pixels[x, v - 1] > MAX_BLACK
+                for x in range(0, width, width // 100)))
+            or ((not is_y) and any(
+                pixels[v - 1, y] > MAX_BLACK
                 for y in range(0, height, height // 100)))
         ):
             return v - 1

@@ -77,7 +77,7 @@ class Test_panorama(unittest.TestCase):
         self.assertEqual(image.size, (512, 512))
         image = get_pil_panorama(
             "p39OM3EDkq3Xpfhv92fPuQ", PanoramaSettings(zoom=1))
-        self.assertEqual(image.size, (1024, 417))
+        self.assertEqual(image.size, (1024, 416))
 
 
 if __name__ == "__main__":

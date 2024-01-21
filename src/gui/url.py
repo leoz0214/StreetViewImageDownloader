@@ -175,8 +175,11 @@ class DimensionInput(tk.Frame):
     """Input for a single dimension - width or height."""
 
     def __init__(
-        self, master: Union[UrlDownload, "batch.UrlSettingsToplevel"],
-        label: str, minimum: int, maximum: int, default: int
+        self, master: Union[
+            UrlDownload, "batch.UrlSettingsToplevel",
+            "rendering.RenderingInputs"],
+        label: str, minimum: int, maximum: int, default: int,
+        length: int = 1500, label_width: int = 8, font_size: int = 20
     ) -> None:
         super().__init__(master)
         self.min = minimum
@@ -187,13 +190,14 @@ class DimensionInput(tk.Frame):
         self._value.trace_add("write", lambda *_: self.update_value(False))
         self._value_str.trace_add("write", lambda *_: self.update_value(True))
 
-        self.label = tk.Label(self, font=inter(20), text=label, width=8)
+        self.label = tk.Label(
+            self, font=inter(font_size), text=label, width=label_width)
         self.scale = tk.Scale(
-            self, font=inter(20), from_=self.min, to=self.max,
-            length=1500, width=30, sliderlength=100,
+            self, font=inter(font_size), from_=self.min, to=self.max,
+            length=length, width=30, sliderlength=100,
             orient="horizontal", variable=self._value)
         self.entry = tk.Entry(
-            self, font=inter(20), width=len(str(self.max)),
+            self, font=inter(font_size), width=len(str(self.max)),
             textvariable=self._value_str)
         
         self.label.grid(row=0, column=0, padx=5, pady=5)
@@ -220,3 +224,5 @@ class DimensionInput(tk.Frame):
         if not self.min <= int(entry_str or 0) <= self.max:
             return
         self._value.set(int(entry_str))
+        if isinstance(self.master, rendering.RenderingInputs):
+            self.master.update_display("length", self.value)
