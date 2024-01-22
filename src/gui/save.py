@@ -71,7 +71,7 @@ class SaveImageFrame(tk.Frame):
 
     def destroy(self) -> None:
         """Exits the save image screen."""
-        self.root.config(menu=None)
+        self.root.config(menu="")
         self.root.unbind("<Control-s>")
         super().destroy()
     

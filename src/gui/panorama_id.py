@@ -25,9 +25,9 @@ from api.panorama import (
 
 CANVAS_CIRCLE_RADIUS = 12
 CANVAS_DIMENSIONS_BY_ZOOM = {
-    1: (256, 128),
+    1: (512, 256),
     2: (512, 256),
-    3: (512, 256),
+    3: (768, 384),
     4: (1024, 512),
     5: (1024, 512)
 }
@@ -98,13 +98,13 @@ class PanoramaIDInput(tk.Frame):
         self._panorama_id.trace_add("write", lambda *_: self.validate())
         self.input = tk.Entry(
             self, font=inter(20), width=25, textvariable=self._panorama_id)
-        self.feedback_label = tk.Label(
+        self.info_label = tk.Label(
             self, font=inter(8), fg=RED,
             text=f"Missing characters: {PANORAMA_ID_LENGTH}")
 
         self.label.grid(row=0, column=0, rowspan=2, padx=5, sticky="n")
         self.input.grid(row=0, column=1, pady=3, padx=5)
-        self.feedback_label.grid(row=1, column=1, pady=3, sticky="e")
+        self.info_label.grid(row=1, column=1, pady=3, sticky="e")
     
     @property
     def panorama_id(self) -> str:
@@ -123,11 +123,11 @@ class PanoramaIDInput(tk.Frame):
             missing_characters = PANORAMA_ID_LENGTH - len(new)
             if missing_characters:
                 self.valid = False
-                self.feedback_label.config(
+                self.info_label.config(
                     text=f"Missing characters: {missing_characters}", fg=RED)
             else:
                 self.valid = True
-                self.feedback_label.config(text="Valid panorama ID.", fg=GREEN)
+                self.info_label.config(text="Valid panorama ID.", fg=GREEN)
         if isinstance(self.master, PanoramaDownload):
             self.master.update_download_button_state()
         elif isinstance(self.master, batch.PanoramaIDToplevel):
@@ -233,8 +233,8 @@ class PanoramaRangeInput(tk.Frame):
 
         self.update_info()
         
-        self.canvas.pack(padx=5, pady=5)
-        self.info_label.pack(padx=5, pady=5)
+        self.canvas.pack(padx=5, pady=5, anchor="center", expand=True)
+        self.info_label.pack(padx=5, pady=5, anchor="center")
     
     def draw_grid_lines(self) -> None:
         """Draws the grid lines separating the tiles."""
