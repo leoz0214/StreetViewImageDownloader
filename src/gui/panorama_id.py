@@ -382,7 +382,7 @@ class PanoramaDownloadToplevel(tk.Toplevel):
     """
 
     def __init__(
-        self, master: Union[PanoramaDownload, rendering.PanoramaRendering],
+        self, master: Union[PanoramaDownload, "rendering.PanoramaRendering"],
         panorama_id: str, settings: PanoramaSettings
     ) -> None:
         super().__init__(master)
