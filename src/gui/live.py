@@ -5,7 +5,7 @@ from tkinter import ttk
 
 import main
 import widgets
-from _utils import inter, BUTTON_COLOURS, GREEN
+from _utils import inter, BUTTON_COLOURS, GREEN, bool_to_state
 from api.panorama import PanoramaSettings
 from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT
 
@@ -16,6 +16,42 @@ class ImageMode:
     panorama = "Panorama"
     url = "URL"
 
+
+@dataclass
+class CaptureMode:
+    """
+    Either register URLs when a new latitude/longitude is detected,
+    at fixed time intervals, or when a given key is pressed.
+    """
+    new_lat_long = "New Latitude/Longitude"
+    fixed_time_intervals = "Fixed Time Intervals"
+    keybind = "Keybind"
+
+
+FIXED_TIME_INTERVALS = {
+    "5 seconds": 5,
+    "10 seconds": 10,
+    "15 seconds": 15,
+    "30 seconds": 30,
+    "45 seconds": 45,
+    "60 seconds": 60,
+    "90 seconds": 90,
+    "2 minutes": 120,
+    "5 minutes": 300,
+    "10 minutes": 600,
+    "Paused": -1
+}
+DEFAULT_FIXED_TIME_INTERVAL = "15 seconds"
+DEFAULT_KEYBIND = ("s",)
+MAX_KEYBIND_LENGTH = 4
+STATE_NAMES = {
+    "Control": "Ctrl",
+    "Shift": "Shift"
+}
+STATE_MASKS = {
+    "Control": 0b00000100,
+    "Shift": 0b0000000001
+}
 
 class LiveDownloading(tk.Frame):
     """Live downloading window."""
@@ -66,8 +102,10 @@ class LiveSettingsFrame(tk.Frame):
     def __init__(self, master: ttk.Notebook) -> None:
         super().__init__(master)
         self.image_mode_frame = LiveImageMode(self)
+        self.capture_mode_frame = LiveCaptureMode(self)
 
         self.image_mode_frame.pack()
+        self.capture_mode_frame.pack()
 
 
 class LiveImageMode(tk.Frame):
@@ -130,6 +168,205 @@ class LiveImageMode(tk.Frame):
                 self, self.master.master.master.root, "panorama_settings")
             return
         widgets.UrlSettingsToplevel(self, self.master.master.master.root)
+
+
+class LiveCaptureMode(tk.Frame):
+    """Allows the user to select the mechanism of capturing URLs."""
+
+    def __init__(self, master: LiveSettingsFrame) -> None:
+        super().__init__(master)
+        self._fixed_time_interval_text = DEFAULT_FIXED_TIME_INTERVAL
+        self.keybind = DEFAULT_KEYBIND
+        self._mode = tk.IntVar(value=0)
+        self._mode.trace_add("write", lambda *_: self.update_display())
+        self.label = tk.Label(self, font=inter(20), text="Capture Mode:")
+        self.label.grid(row=0, column=0, padx=5, pady=5)
+        for value, text in enumerate(
+            ("New Lat/Long", "Fixed Intervals", "Keybind")
+        ):
+            radiobutton = tk.Radiobutton(
+                self, font=inter(20), text=text, width=15, value=value,
+                variable=self._mode, **BUTTON_COLOURS, indicatoron=False,
+                selectcolor=GREEN)
+            radiobutton.grid(row=0, column=value + 1, padx=5, pady=5)
+        
+        self.info_label = tk.Label(self, font=inter(12))
+        self.edit_button = tk.Button(
+            self, font=inter(12), text="Edit", width=15,
+            **BUTTON_COLOURS, command=self.edit, state="disabled")
+        self.info_label.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+        self.edit_button.grid(row=1, column=3, padx=5, pady=5)
+        self.update_display()
+    
+    @property
+    def mode(self) -> CaptureMode:
+        return (
+            CaptureMode.new_lat_long, CaptureMode.fixed_time_intervals,
+            CaptureMode.keybind)[self._mode.get()]
+
+    @property
+    def fixed_time_interval(self) -> int | float:
+        return FIXED_TIME_INTERVALS[self._fixed_time_interval_text]
+
+    def update_display(self) -> None:
+        """Updates the display when the register mode is changed."""
+        self.update_info_label()
+        self.edit_button.config(
+            state=bool_to_state(self.mode != CaptureMode.new_lat_long))
+
+    def update_info_label(self) -> None:
+        """Updates the information label when settings are changed."""
+        match self.mode:
+            case CaptureMode.new_lat_long:
+                text = "URLs with a new latitude/longitude will be captured."
+            case CaptureMode.fixed_time_intervals:
+                text = (
+                    f"Time between captures: {self._fixed_time_interval_text}")
+            case CaptureMode.keybind:
+                text = f"Keybind: {' '.join(self.keybind)}"
+        self.info_label.config(text=text)
+
+    def edit(self) -> None:
+        """Allows editing of a sub-setting."""
+        if self.mode == CaptureMode.fixed_time_intervals:
+            FixedTimeIntervalToplevel(self)
+            return
+        KeybindToplevel(self)
+
+
+class FixedTimeIntervalToplevel(tk.Toplevel):
+    """Toplevel setting for setting a fixed time between captures."""
+
+    def __init__(self, master: LiveCaptureMode) -> None:
+        super().__init__(master)
+        self._fixed_time_interval = tk.StringVar(
+            value=master._fixed_time_interval_text)
+        self.title(
+            f"{main.TITLE} - Live Downloading - Fixed Time Interval Setting")
+        self.grab_set()
+
+        self.title_label = tk.Label(
+            self, font=inter(25, True), text="Fixed Time Interval Setting")
+        self.info_label = tk.Label(
+            self, font=inter(12),
+            text=("Consider how often you would like to capture URLs.\n"
+                "Note that the same URL will only be downloaded once."))
+
+        self.title_label.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
+        self.info_label.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+        
+        for i, text in enumerate(FIXED_TIME_INTERVALS):
+            radiobutton = tk.Radiobutton(
+                self, font=inter(15), text=text, width=15, value=text,
+                variable=self._fixed_time_interval, **BUTTON_COLOURS,
+                indicatoron=False, selectcolor=GREEN)
+            radiobutton.grid(row=2 + i // 2, column=i % 2, padx=5, pady=3)
+        
+        self.save_button = tk.Button(
+            self, font=inter(20), text="Save", width=15,
+            **BUTTON_COLOURS, command=self.save)
+        self.save_button.grid(row=99, column=0, columnspan=2, padx=10, pady=10)
+    
+    def save(self) -> None:
+        """Saves the fixed time interval setting."""
+        self.master._fixed_time_interval_text = self._fixed_time_interval.get()
+        self.master.update_info_label()
+        self.destroy()
+
+
+class KeybindToplevel(tk.Toplevel):
+    """Allows the user to set a keybind to capture URLs by."""
+
+    def __init__(self, master: LiveCaptureMode) -> None:
+        super().__init__(master)
+        self.keybind = master.keybind
+        self.keys_pressed = set()
+        self.keys_released = set()
+        self.title(f"{main.TITLE} - Live Downloading - Keybind Setting")
+        self.grab_set()
+        self.focus()
+
+        self.title_label = tk.Label(
+            self, font=inter(25, True), text="Keybind Setting")
+        self.info_label = tk.Label(
+            self, font=inter(12),
+            text=("When the given keybind is registered, "
+                "the current URL will be captured.\n"
+                "Try to select a keybind you feel comfortable using, "
+                "ideally one not already used in Chrome.\n"
+                f"Maximum keybind length: {MAX_KEYBIND_LENGTH}"))
+        self.keybind_label = tk.Label(
+            self, font=inter(25),
+            text=f"Current keybind: {' '.join(self.keybind)}")
+        self.save_button = tk.Button(
+            self, font=inter(20), text="Save", width=15,
+            **BUTTON_COLOURS, command=self.save)
+        
+        self.bind("<KeyPress>", self.key_press)
+        self.bind("<KeyRelease>", self.key_release)
+        
+        self.title_label.pack(padx=10, pady=10)
+        self.info_label.pack(padx=10, pady=10)
+        self.keybind_label.pack(padx=10, pady=10)
+        self.save_button.pack(padx=10, pady=10)
+    
+    @property
+    def all_released(self) -> bool:
+        keybind_lists = self._get_keybind_lists()
+        return sorted(keybind_lists[0]) == sorted(keybind_lists[1])
+    
+    @property
+    def no_pressed(self) -> bool:
+        keybind_lists = self._get_keybind_lists()
+        return not set(keybind_lists[0]) - set(keybind_lists[1])
+
+    def _get_keybind_lists(self) -> list:
+        keybind_lists = []
+        for keybinds in (self.keys_pressed, self.keys_released):
+            keybind_lists.append(
+                [
+                    tuple(part.lower() for part in keybind.split("+")
+                        if part not in STATE_NAMES.values())
+                    for keybind in keybinds])
+        return keybind_lists
+
+    def _get_key(self, event: tk.Event) -> str | None:
+        if len(event.keysym) > 1:
+            return None
+        parts = [
+            STATE_NAMES[state]
+            for state in ("Control", "Shift")
+                if event.state & STATE_MASKS[state]] + [event.keysym]
+        return "+".join(parts)
+
+    def key_press(self, event: tk.Event) -> None:
+        """Registers a key input."""
+        key = self._get_key(event)
+        if key is None:
+            return
+        self.keys_pressed.add(key)
+        if key in self.keys_released:
+            self.keys_released.remove(key)
+    
+    def key_release(self, event: tk.Event) -> None:
+        """Key release. If all keys released, that is the keybind."""
+        key = self._get_key(event)
+        if key is None:
+            return
+        self.keys_released.add(self._get_key(event))
+        if self.all_released and len(self.keys_pressed) <= MAX_KEYBIND_LENGTH:
+            self.keybind = tuple(sorted(self.keys_pressed))
+            self.keybind_label.config(
+                text=f"Current keybind: {' '.join(self.keybind)}")
+        if self.all_released or self.no_pressed:
+            self.keys_pressed.clear()
+            self.keys_released.clear()
+    
+    def save(self) -> None:
+        """Saves the currently set keybind."""
+        self.master.keybind = self.keybind
+        self.master.update_info_label()
+        self.destroy()
 
 
 class LiveInfoFrame(tk.Frame):
