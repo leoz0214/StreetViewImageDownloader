@@ -1,6 +1,8 @@
 """Live image downloading using a tracked selenium window."""
+import enum
+import pathlib
 import tkinter as tk
-from dataclasses import dataclass
+from tkinter import filedialog
 from tkinter import ttk
 
 import main
@@ -10,15 +12,13 @@ from api.panorama import PanoramaSettings
 from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT
 
 
-@dataclass
-class ImageMode:
+class ImageMode(enum.Enum):
     """Download either panoramas or URL images."""
     panorama = "Panorama"
     url = "URL"
 
 
-@dataclass
-class CaptureMode:
+class CaptureMode(enum.Enum):
     """
     Either register URLs when a new latitude/longitude is detected,
     at fixed time intervals, or when a given key is pressed.
@@ -27,6 +27,30 @@ class CaptureMode:
     fixed_time_intervals = "Fixed Time Intervals"
     keybind = "Keybind"
 
+
+class SaveMode(enum.Enum):
+    """
+    Format file save names in various ways: smallest available integer,
+    Unix timestamp, formatted date/time, panorama ID, latitude/longitude.
+    """
+    smallest_integer = "Smallest Available Integer"
+    unix_timestamp = "Unix Timestamp"
+    date_time = "Formatted Date/Time"
+    panorama_id = "Panorama ID"
+    lat_long = "Latitude/Longitude"
+
+
+DEFAULT_IMAGE_MODE = 1
+DEFAULT_CAPTURE_MODE = 0
+DEFAULT_SAVE_MODE = SaveMode.date_time.value
+SAVE_MODE_OPTIONS = {
+    "Smallest Available Integer": SaveMode.smallest_integer,
+    "Unix Timestamp": SaveMode.unix_timestamp,
+    "Formatted Date/Time": SaveMode.date_time,
+    "Latitude/Longitude": SaveMode.lat_long
+}
+PANORAMA_ID_SAVE_MODE_OPTIONS = (
+    SAVE_MODE_OPTIONS | {"Panorama ID": SaveMode.panorama_id})
 
 FIXED_TIME_INTERVALS = {
     "5 seconds": 5,
@@ -43,15 +67,31 @@ FIXED_TIME_INTERVALS = {
 }
 DEFAULT_FIXED_TIME_INTERVAL = "15 seconds"
 DEFAULT_KEYBIND = ("s",)
-MAX_KEYBIND_LENGTH = 4
+MAX_KEYBIND_LENGTH = 3
 STATE_NAMES = {
     "Control": "Ctrl",
-    "Shift": "Shift"
+    "Shift": "Shift",
+    "Alt": "Alt"
 }
 STATE_MASKS = {
     "Control": 0b00000100,
-    "Shift": 0b0000000001
+    "Shift": 0b0000000001,
+    "Alt": 131072
 }
+# Support various symbols and special characters as keybinds.
+KEYSYMS = {
+    "Tab": "Tab", "Insert": "Ins", "Delete": "Del", "BackSpace": "Back",
+    "Return": "Ret", "exclam": "!", "quotedbl": '"', "sterling": "£",
+    "dollar": "$", "percent": "%", "asciicircum": "^", "ampersand": "&",
+    "asterisk": "*", "parenleft": "(", "parenright": ")", "bracketleft": "[",
+    "bracketright": "]", "braceleft": "{", "braceright": "}", "minus": "-",
+    "underscore": "_", "plus": "+", "equal": "=", "colon": ":",
+    "semicolon": ";", "at": "@", "apostrophe": "'", "numbersign": "#",
+    "asciitilde": "~", "backslash": "\\", "bar": "|", "comma": ",",
+    "period": ".", "greater": ">", "less": "<", "question": "?", "slash": "/",
+    "Up": "↑", "Down": "↓", "Left": "←", "Right": "→"
+} | {f"F{f}": f"F{f}" for f in range(1, 13)}
+
 
 class LiveDownloading(tk.Frame):
     """Live downloading window."""
@@ -63,6 +103,12 @@ class LiveDownloading(tk.Frame):
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Live Downloading")
+        self.back_button = tk.Button(
+            self, font=inter(20), text="Back", width=15,
+            **BUTTON_COLOURS, command=self.back)
+        self.start_button = tk.Button(
+            self, font=inter(20), text="Start", width=15,
+            **BUTTON_COLOURS, command=self.start)
 
         self.notebook = ttk.Notebook(self)
         style = ttk.Style()
@@ -74,13 +120,6 @@ class LiveDownloading(tk.Frame):
         self.notebook.add(self.settings_frame, text="Settings")
         self.notebook.add(self.info_frame, text="Output")
 
-        self.back_button = tk.Button(
-            self, font=inter(20), text="Back", width=15,
-            **BUTTON_COLOURS, command=self.back)
-        self.start_button = tk.Button(
-            self, font=inter(20), text="Start", width=15,
-            **BUTTON_COLOURS, command=self.start)
-        
         self.title.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
         self.notebook.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
         self.back_button.grid(row=2, column=0, padx=5, pady=5)
@@ -94,6 +133,10 @@ class LiveDownloading(tk.Frame):
     def start(self) -> None:
         """Opens the selenium window and starts the tracking."""
         # TODO
+    
+    def update_start_button_state(self, folder_set: bool) -> None:
+        """Updates start button state based on inputs."""
+        self.start_button.config(state=bool_to_state(folder_set))
 
 
 class LiveSettingsFrame(tk.Frame):
@@ -103,9 +146,23 @@ class LiveSettingsFrame(tk.Frame):
         super().__init__(master)
         self.image_mode_frame = LiveImageMode(self)
         self.capture_mode_frame = LiveCaptureMode(self)
+        self.save_mode_frame = LiveSaveMode(self)
 
-        self.image_mode_frame.pack()
-        self.capture_mode_frame.pack()
+        self.image_mode_frame.pack(pady=25)
+        self.capture_mode_frame.pack(pady=25)
+        self.save_mode_frame.pack(pady=25)
+
+        self.synchronise()
+    
+    def synchronise(self) -> None:
+        """
+        Performs any relevant updates to other settings
+        after a significant change.
+        """
+        self.save_mode_frame.update_options(
+            self.image_mode_frame.image_mode == ImageMode.panorama)
+        self.master.master.update_start_button_state(
+            self.save_mode_frame.folder_set)
 
 
 class LiveImageMode(tk.Frame):
@@ -116,7 +173,7 @@ class LiveImageMode(tk.Frame):
         self.panorama_settings = PanoramaSettings()
         self.width = DEFAULT_WIDTH
         self.height = DEFAULT_HEIGHT
-        self._mode = tk.IntVar(value=1)
+        self._mode = tk.IntVar(value=DEFAULT_IMAGE_MODE)
         self._mode.trace_add("write", lambda *_: self.update_info_label())
         self.label = tk.Label(self, font=inter(20), text="Image Mode:")
         self.label.grid(row=0, column=0, padx=5, pady=5)
@@ -134,13 +191,13 @@ class LiveImageMode(tk.Frame):
         self.info_label.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
         self.edit_button.grid(row=1, column=2, padx=5, pady=5)
 
-        self.update_info_label()
+        self.update_info_label(first=True)
     
     @property
     def image_mode(self) -> ImageMode:
         return ImageMode.panorama if self._mode.get() == 0 else ImageMode.url
     
-    def update_info_label(self) -> None:
+    def update_info_label(self, first: bool = False) -> None:
         """Updates the information text."""
         font_size = 12
         width = 50
@@ -160,6 +217,9 @@ class LiveImageMode(tk.Frame):
         else:
             text = f"Dimensions: {self.width} x {self.height}"
         self.info_label.config(text=text, font=inter(font_size), width=width)
+        if not first:
+            # Also update save mode options state.
+            self.master.synchronise()
     
     def edit(self) -> None:
         """Opens the appropriate settings toplevel for editing."""
@@ -177,7 +237,7 @@ class LiveCaptureMode(tk.Frame):
         super().__init__(master)
         self._fixed_time_interval_text = DEFAULT_FIXED_TIME_INTERVAL
         self.keybind = DEFAULT_KEYBIND
-        self._mode = tk.IntVar(value=0)
+        self._mode = tk.IntVar(value=DEFAULT_CAPTURE_MODE)
         self._mode.trace_add("write", lambda *_: self.update_display())
         self.label = tk.Label(self, font=inter(20), text="Capture Mode:")
         self.label.grid(row=0, column=0, padx=5, pady=5)
@@ -312,11 +372,14 @@ class KeybindToplevel(tk.Toplevel):
     
     @property
     def all_released(self) -> bool:
+        # All pressed keys also registered as released.
         keybind_lists = self._get_keybind_lists()
         return sorted(keybind_lists[0]) == sorted(keybind_lists[1])
     
     @property
     def no_pressed(self) -> bool:
+        # No pressed keys, but possibly some failed
+        # to have been registered as released.
         keybind_lists = self._get_keybind_lists()
         return not set(keybind_lists[0]) - set(keybind_lists[1])
 
@@ -331,12 +394,16 @@ class KeybindToplevel(tk.Toplevel):
         return keybind_lists
 
     def _get_key(self, event: tk.Event) -> str | None:
-        if len(event.keysym) > 1:
+        if event.keysym in KEYSYMS:
+            keysym = KEYSYMS[event.keysym]
+        elif len(event.keysym) > 1:
             return None
+        else:
+            keysym = event.keysym
         parts = [
             STATE_NAMES[state]
-            for state in ("Control", "Shift")
-                if event.state & STATE_MASKS[state]] + [event.keysym]
+            for state in ("Control", "Shift", "Alt")
+                if event.state & STATE_MASKS[state]] + [keysym]
         return "+".join(parts)
 
     def key_press(self, event: tk.Event) -> None:
@@ -367,6 +434,70 @@ class KeybindToplevel(tk.Toplevel):
         self.master.keybind = self.keybind
         self.master.update_info_label()
         self.destroy()
+
+
+class LiveSaveMode(tk.Frame):
+    """
+    Allows the user to select the file name save format and the save folder.
+    """
+
+    def __init__(self, master: LiveSettingsFrame) -> None:
+        super().__init__(master)
+        self._save_mode = tk.StringVar(value=DEFAULT_SAVE_MODE)
+        self._save_folder = tk.StringVar(value="Not Set")
+        self.save_mode_label = tk.Label(
+            self, font=inter(20), text="Filename Mode:")
+        style = ttk.Style()
+        style.configure("TMenubutton", font=inter(15), width=20)
+
+        self.save_folder_label = tk.Label(
+            self, font=inter(20), text="Save Folder:")
+        self.save_folder_entry = tk.Entry(
+            self, font=inter(10), width=64, textvariable=self._save_folder,
+            state="readonly")
+        self.save_folder_button = tk.Button(
+            self, font=inter(12), text="Select", width=15,
+            **BUTTON_COLOURS, command=self.select_folder)
+
+        self.save_mode_label.grid(row=0, column=0, padx=5, pady=5)
+        self.save_folder_label.grid(row=1, column=0, padx=5, pady=5)
+        self.save_folder_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.save_folder_button.grid(row=1, column=2, padx=5, pady=5)
+        
+    @property
+    def save_mode(self) -> SaveMode:
+        return PANORAMA_ID_SAVE_MODE_OPTIONS[self._save_mode.get()]
+    
+    @property
+    def folder_set(self) -> bool:
+        return self._save_folder.get() != "Not Set"
+    
+    @property
+    def save_folder(self) -> pathlib.Path:
+        return pathlib.Path(self._save_folder.get())
+    
+    def select_folder(self) -> None:
+        """Allows user to set save folder."""
+        folder = filedialog.askdirectory(title="Select Save Folder")
+        if not folder:
+            return
+        self._save_folder.set(folder)
+        self.master.synchronise()
+    
+    def update_options(self, is_panorama_mode: bool) -> None:
+        """Updates options depending on image mode."""
+        if hasattr(self, "save_mode_option_menu"):
+            self.save_mode_option_menu.destroy()
+        if is_panorama_mode:
+            options = PANORAMA_ID_SAVE_MODE_OPTIONS
+        else:
+            options = SAVE_MODE_OPTIONS
+            if self.save_mode == SaveMode.panorama_id:
+                self._save_mode.set(DEFAULT_SAVE_MODE)
+        self.save_mode_option_menu = ttk.OptionMenu(
+            self, self._save_mode, None, *options)
+        self.save_mode_option_menu.grid(
+            row=0, column=1, columnspan=2, padx=5, pady=5)
 
 
 class LiveInfoFrame(tk.Frame):
