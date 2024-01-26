@@ -3,7 +3,7 @@ import tkinter as tk
 
 import panorama_id
 import url
-from _utils import inter, BUTTON_COLOURS
+from _utils import inter, BUTTON_COLOURS, GREEN, BLACK, RED
 from api.url import MIN_WIDTH, MAX_WIDTH, MIN_HEIGHT, MAX_HEIGHT
 
 
@@ -74,3 +74,38 @@ class PanoramaIDSettingsToplevel(tk.Toplevel):
         setattr(self.master, self.settings_name, settings)
         self.master.update_info_label()
         self.destroy()
+
+
+class Logger(tk.Frame):
+    """Text logging for good, neutral and bad messages."""
+
+    def __init__(self, master: tk.Widget) -> None:
+        super().__init__(master)
+        self.textbox = tk.Text(
+            self, font=inter(11), width=64, height=25, state="disabled")
+        self.scrollbar = tk.Scrollbar(
+            self, orient="vertical", command=self.textbox.yview)
+        self.textbox.config(yscrollcommand=self.scrollbar.set)
+        self.textbox.tag_config("good", foreground=GREEN)
+        self.textbox.tag_config("neutral", foreground=BLACK)
+        self.textbox.tag_config("bad", foreground=RED)
+
+        self.textbox.grid(row=0, column=0)
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+    
+    def _log(self, text: str, tag: str) -> None:
+        self.textbox.config(state="normal")
+        self.textbox.insert("end", f"{text}\n", tag)
+        self.textbox.config(state="disabled")
+    
+    def log_good(self, text: str) -> None:
+        """Logs a positive message."""
+        self._log(text, "good")
+    
+    def log_neutral(self, text: str) -> None:
+        """Logs a neutral message."""
+        self._log(text, "neutral")
+    
+    def log_bad(self, text: str) -> None:
+        """Logs a bad message, including errors."""
+        self._log(text, "bad")

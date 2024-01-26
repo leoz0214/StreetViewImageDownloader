@@ -17,13 +17,11 @@ import panorama_id
 import url
 import widgets
 from _utils import (
-    inter, BUTTON_COLOURS, GREEN, RED, BLACK, get_text_width, bool_to_state,
+    inter, BUTTON_COLOURS, GREEN, RED, get_text_width, bool_to_state,
     format_seconds)
 from api.panorama import (
     validate_panorama_id, PanoramaSettings, _get_async_images, _combine_tiles)
-from api.url import (
-    DEFAULT_WIDTH, DEFAULT_HEIGHT,
-    MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT, parse_url, get_pil_image)
+from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT, parse_url, get_pil_image
 
 
 MIN_TABLE_HEIGHT = 15
@@ -645,7 +643,7 @@ class BatchDownloadToplevel(tk.Toplevel):
             orient="horizontal")
         self.progress_label = tk.Label(self, font=inter(12))
         self.update_progress()
-        self.logger = Logger(self)
+        self.logger = widgets.Logger(self)
         self.cancel_button = tk.Button(
             self, font=inter(20), text="Cancel", width=15,
             bg=RED, activebackground=RED, command=self.cancel)
@@ -743,38 +741,3 @@ class BatchDownloadToplevel(tk.Toplevel):
         """Cancels the bulk download."""
         self.cancelled = True
         self.destroy()
-
-
-class Logger(tk.Frame):
-    """Text logging for good, neutral and bad messages."""
-
-    def __init__(self, master: BatchDownloadToplevel) -> None:
-        super().__init__(master)
-        self.textbox = tk.Text(
-            self, font=inter(11), width=64, height=25, state="disabled")
-        self.scrollbar = tk.Scrollbar(
-            self, orient="vertical", command=self.textbox.yview)
-        self.textbox.config(yscrollcommand=self.scrollbar.set)
-        self.textbox.tag_config("good", foreground=GREEN)
-        self.textbox.tag_config("neutral", foreground=BLACK)
-        self.textbox.tag_config("bad", foreground=RED)
-
-        self.textbox.grid(row=0, column=0)
-        self.scrollbar.grid(row=0, column=1, sticky="ns")
-    
-    def _log(self, text: str, tag: str) -> None:
-        self.textbox.config(state="normal")
-        self.textbox.insert("end", f"{text}\n", tag)
-        self.textbox.config(state="disabled")
-    
-    def log_good(self, text: str) -> None:
-        """Logs a positive message."""
-        self._log(text, "good")
-    
-    def log_neutral(self, text: str) -> None:
-        """Logs a neutral message."""
-        self._log(text, "neutral")
-    
-    def log_bad(self, text: str) -> None:
-        """Logs a bad message, including errors."""
-        self._log(text, "bad")

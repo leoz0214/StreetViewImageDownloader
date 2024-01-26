@@ -2,6 +2,8 @@
 import enum
 import pathlib
 import tkinter as tk
+from contextlib import suppress
+from dataclasses import dataclass
 from tkinter import filedialog
 from tkinter import ttk
 
@@ -40,9 +42,43 @@ class SaveMode(enum.Enum):
     lat_long = "Latitude/Longitude"
 
 
+class DownloadMode(enum.Enum):
+    """
+    URLs may be captured very fast, too fast for the program
+    to keep up with in terms of processing each URL.
+    Either maintain a queue or download on demand.
+    """
+    queue = "Queue"
+    on_demand = "On Demand"
+
+
+@dataclass
+class LiveSettings:
+    """Bundles together all the settings for live downloading."""
+    # Image Mode
+    image_mode: ImageMode
+    panorama_settings: PanoramaSettings
+    url_width: int
+    url_height: int
+    # Capture Mode
+    capture_mode: CaptureMode
+    fixed_time_interval: int | float
+    keybind: tuple[str]
+    # Save Mode
+    save_mode: SaveMode
+    save_folder: pathlib.Path
+    # Download Mode / Stop Upon Error
+    download_mode: DownloadMode
+    stop_upon_error: bool
+
+
+# Default settings
 DEFAULT_IMAGE_MODE = 1
 DEFAULT_CAPTURE_MODE = 0
 DEFAULT_SAVE_MODE = SaveMode.date_time.value
+DEFAULT_DOWNLOAD_MODE = 1
+DEFAULT_STOP_UPON_ERROR = False
+
 SAVE_MODE_OPTIONS = {
     "Smallest Available Integer": SaveMode.smallest_integer,
     "Unix Timestamp": SaveMode.unix_timestamp,
@@ -53,31 +89,15 @@ PANORAMA_ID_SAVE_MODE_OPTIONS = (
     SAVE_MODE_OPTIONS | {"Panorama ID": SaveMode.panorama_id})
 
 FIXED_TIME_INTERVALS = {
-    "5 seconds": 5,
-    "10 seconds": 10,
-    "15 seconds": 15,
-    "30 seconds": 30,
-    "45 seconds": 45,
-    "60 seconds": 60,
-    "90 seconds": 90,
-    "2 minutes": 120,
-    "5 minutes": 300,
-    "10 minutes": 600,
-    "Paused": -1
+    "5 seconds": 5, "10 seconds": 10, "15 seconds": 15, "30 seconds": 30,
+    "45 seconds": 45, "90 seconds": 90, "2 minutes": 120, "5 minutes": 300,
+    "10 minutes": 600, "Paused": -1
 }
 DEFAULT_FIXED_TIME_INTERVAL = "15 seconds"
 DEFAULT_KEYBIND = ("s",)
 MAX_KEYBIND_LENGTH = 3
-STATE_NAMES = {
-    "Control": "Ctrl",
-    "Shift": "Shift",
-    "Alt": "Alt"
-}
-STATE_MASKS = {
-    "Control": 0b00000100,
-    "Shift": 0b0000000001,
-    "Alt": 131072
-}
+STATE_NAMES = {"Control": "Ctrl", "Shift": "Shift", "Alt": "Alt"}
+STATE_MASKS = {"Control": 0b00000100, "Shift": 0b00000001, "Alt": 131072}
 # Support various symbols and special characters as keybinds.
 KEYSYMS = {
     "Tab": "Tab", "Insert": "Ins", "Delete": "Del", "BackSpace": "Back",
@@ -132,7 +152,7 @@ class LiveDownloading(tk.Frame):
     
     def start(self) -> None:
         """Opens the selenium window and starts the tracking."""
-        # TODO
+        print(self.settings_frame.settings)
     
     def update_start_button_state(self, folder_set: bool) -> None:
         """Updates start button state based on inputs."""
@@ -147,10 +167,14 @@ class LiveSettingsFrame(tk.Frame):
         self.image_mode_frame = LiveImageMode(self)
         self.capture_mode_frame = LiveCaptureMode(self)
         self.save_mode_frame = LiveSaveMode(self)
+        self.download_mode_frame = LiveDownloadMode(self)
+        self.stop_upon_error_checkbutton = LiveStopUponError(self)
 
-        self.image_mode_frame.pack(pady=25)
-        self.capture_mode_frame.pack(pady=25)
-        self.save_mode_frame.pack(pady=25)
+        self.image_mode_frame.pack(pady=10)
+        self.capture_mode_frame.pack(pady=10)
+        self.save_mode_frame.pack(pady=10)
+        self.download_mode_frame.pack(pady=10)
+        self.stop_upon_error_checkbutton.pack(pady=10)
 
         self.synchronise()
     
@@ -163,6 +187,23 @@ class LiveSettingsFrame(tk.Frame):
             self.image_mode_frame.image_mode == ImageMode.panorama)
         self.master.master.update_start_button_state(
             self.save_mode_frame.folder_set)
+    
+    @property
+    def settings(self) -> LiveSettings:
+        # Returns entire settings object based on current GUI inputs.
+        return LiveSettings(
+            self.image_mode_frame.image_mode,
+            self.image_mode_frame.panorama_settings,
+            self.image_mode_frame.width, self.image_mode_frame.height,
+
+            self.capture_mode_frame.capture_mode,
+            self.capture_mode_frame.fixed_time_interval,
+            self.capture_mode_frame.keybind,
+
+            self.save_mode_frame.save_mode, self.save_mode_frame.save_folder,
+
+            self.download_mode_frame.download_mode,
+            self.stop_upon_error_checkbutton.stop_upon_error)
 
 
 class LiveImageMode(tk.Frame):
@@ -195,7 +236,7 @@ class LiveImageMode(tk.Frame):
     
     @property
     def image_mode(self) -> ImageMode:
-        return ImageMode.panorama if self._mode.get() == 0 else ImageMode.url
+        return (ImageMode.panorama, ImageMode.url)[self._mode.get()]
     
     def update_info_label(self, first: bool = False) -> None:
         """Updates the information text."""
@@ -259,7 +300,7 @@ class LiveCaptureMode(tk.Frame):
         self.update_display()
     
     @property
-    def mode(self) -> CaptureMode:
+    def capture_mode(self) -> CaptureMode:
         return (
             CaptureMode.new_lat_long, CaptureMode.fixed_time_intervals,
             CaptureMode.keybind)[self._mode.get()]
@@ -272,11 +313,11 @@ class LiveCaptureMode(tk.Frame):
         """Updates the display when the register mode is changed."""
         self.update_info_label()
         self.edit_button.config(
-            state=bool_to_state(self.mode != CaptureMode.new_lat_long))
+            state=bool_to_state(self.capture_mode != CaptureMode.new_lat_long))
 
     def update_info_label(self) -> None:
         """Updates the information label when settings are changed."""
-        match self.mode:
+        match self.capture_mode:
             case CaptureMode.new_lat_long:
                 text = "URLs with a new latitude/longitude will be captured."
             case CaptureMode.fixed_time_intervals:
@@ -288,7 +329,7 @@ class LiveCaptureMode(tk.Frame):
 
     def edit(self) -> None:
         """Allows editing of a sub-setting."""
-        if self.mode == CaptureMode.fixed_time_intervals:
+        if self.capture_mode == CaptureMode.fixed_time_intervals:
             FixedTimeIntervalToplevel(self)
             return
         KeybindToplevel(self)
@@ -383,7 +424,9 @@ class KeybindToplevel(tk.Toplevel):
         keybind_lists = self._get_keybind_lists()
         return not set(keybind_lists[0]) - set(keybind_lists[1])
 
-    def _get_keybind_lists(self) -> list:
+    def _get_keybind_lists(self) -> list[list[tuple]]:
+        # Get keybinds pressed and released, but case-insensitive and
+        # ignoring special states: Control/Shift/Alt.
         keybind_lists = []
         for keybinds in (self.keys_pressed, self.keys_released):
             keybind_lists.append(
@@ -397,12 +440,12 @@ class KeybindToplevel(tk.Toplevel):
         if event.keysym in KEYSYMS:
             keysym = KEYSYMS[event.keysym]
         elif len(event.keysym) > 1:
+            # Not a character key nor a supported control key.
             return None
         else:
             keysym = event.keysym
         parts = [
-            STATE_NAMES[state]
-            for state in ("Control", "Shift", "Alt")
+            name for state, name in STATE_NAMES.items()
                 if event.state & STATE_MASKS[state]] + [keysym]
         return "+".join(parts)
 
@@ -486,7 +529,7 @@ class LiveSaveMode(tk.Frame):
     
     def update_options(self, is_panorama_mode: bool) -> None:
         """Updates options depending on image mode."""
-        if hasattr(self, "save_mode_option_menu"):
+        with suppress(AttributeError):
             self.save_mode_option_menu.destroy()
         if is_panorama_mode:
             options = PANORAMA_ID_SAVE_MODE_OPTIONS
@@ -498,6 +541,43 @@ class LiveSaveMode(tk.Frame):
             self, self._save_mode, None, *options)
         self.save_mode_option_menu.grid(
             row=0, column=1, columnspan=2, padx=5, pady=5)
+
+
+class LiveDownloadMode(tk.Frame):
+    """Option to set the download mode."""
+
+    def __init__(self, master: LiveSettingsFrame) -> None:
+        super().__init__(master)
+        self._mode = tk.IntVar(value=DEFAULT_DOWNLOAD_MODE)
+        self.label = tk.Label(self, font=inter(20), text="Download Mode:")
+        self.label.grid(row=0, column=0, padx=5, pady=5)
+        for value, text in enumerate(("Queue", "On Demand")):
+            radiobutton = tk.Radiobutton(
+                self, font=inter(20), text=text, width=15, value=value,
+                variable=self._mode, **BUTTON_COLOURS, indicatoron=False,
+                selectcolor=GREEN)
+            radiobutton.grid(row=0, column=value + 1, padx=5, pady=5)
+    
+    @property
+    def download_mode(self) -> DownloadMode:
+        return (DownloadMode.queue, DownloadMode.on_demand)[self._mode.get()]
+
+
+class LiveStopUponError(tk.Checkbutton):
+    """
+    Option to allow the user to stop the live downloading upon any error,
+    or log but otherwise ignore errors.
+    """
+
+    def __init__(self, master: LiveSettingsFrame) -> None:
+        self._stop_upon_error = tk.BooleanVar(value=DEFAULT_STOP_UPON_ERROR)
+        super().__init__(
+            master, font=inter(15), text="Stop upon error", width=15,
+            variable=self._stop_upon_error)
+
+    @property
+    def stop_upon_error(self) -> bool:
+        return self._stop_upon_error.get()
 
 
 class LiveInfoFrame(tk.Frame):
