@@ -1,10 +1,13 @@
 """Live image downloading using a tracked selenium window."""
 import enum
+import hashlib
+import json
 import pathlib
 import tkinter as tk
 from contextlib import suppress
 from dataclasses import dataclass
 from tkinter import filedialog
+from tkinter import messagebox
 from tkinter import ttk
 
 import main
@@ -70,6 +73,60 @@ class LiveSettings:
     # Download Mode / Stop Upon Error
     download_mode: DownloadMode
     stop_upon_error: bool
+
+    def to_json(self) -> str:
+        """
+        Converts the settings object to a JSON string with
+        hashing to maintain data integrity.
+        """
+        data = {
+            "image_mode": {
+                "image_mode": self.image_mode.value,
+                "panorama_settings": (
+                    self.panorama_settings.zoom,
+                    self.panorama_settings.top_left,
+                    self.panorama_settings.bottom_right,
+                ),
+                "url_width": self.url_width,
+                "url_height": self.url_height
+            },
+            "capture_mode": {
+                "capture_mode": self.capture_mode.value,
+                "fixed_time_interval": self.fixed_time_interval,
+                "keybind": self.keybind,
+            },
+            "save_mode": {
+                "save_mode": self.save_mode.value,
+                "save_folder": str(self.save_folder)
+            },
+            "download_mode": self.download_mode.value,
+            "stop_upon_error": self.stop_upon_error
+        }
+        integrity_hash = hashlib.sha256(
+            json.dumps(data).encode()).hexdigest()
+        data["integrity_hash"] = integrity_hash
+        return json.dumps(data, indent=4)
+
+    @staticmethod
+    def from_json(json_data: dict) -> "LiveSettings":
+        """Creates the settings object from JSON."""
+        integrity_hash = json_data.pop("integrity_hash", None)
+        expected_hash = hashlib.sha256(
+            json.dumps(json_data).encode()).hexdigest()
+        if integrity_hash != expected_hash:
+            raise ValueError("Data is not in its original form.")
+        return LiveSettings(
+            ImageMode(json_data["image_mode"]["image_mode"]),
+            PanoramaSettings(*json_data["image_mode"]["panorama_settings"]),
+            json_data["image_mode"]["url_width"],
+            json_data["image_mode"]["url_height"],
+            CaptureMode(json_data["capture_mode"]["capture_mode"]),
+            json_data["capture_mode"]["fixed_time_interval"],
+            tuple(json_data["capture_mode"]["keybind"]),
+            SaveMode(json_data["save_mode"]["save_mode"]),
+            pathlib.Path(json_data["save_mode"]["save_folder"]),
+            DownloadMode(json_data["download_mode"]),
+            json_data["stop_upon_error"])
 
 
 # Default settings
@@ -169,12 +226,21 @@ class LiveSettingsFrame(tk.Frame):
         self.save_mode_frame = LiveSaveMode(self)
         self.download_mode_frame = LiveDownloadMode(self)
         self.stop_upon_error_checkbutton = LiveStopUponError(self)
+        self.import_json_button = tk.Button(
+            self, font=inter(15), text="Import JSON", width=15,
+            **BUTTON_COLOURS, command=self.import_json)
+        self.export_json_button = tk.Button(
+            self, font=inter(15), text="Export JSON", width=15,
+            **BUTTON_COLOURS, command=self.export_json)
 
-        self.image_mode_frame.pack(pady=10)
-        self.capture_mode_frame.pack(pady=10)
-        self.save_mode_frame.pack(pady=10)
-        self.download_mode_frame.pack(pady=10)
-        self.stop_upon_error_checkbutton.pack(pady=10)
+        self.image_mode_frame.grid(row=0, column=0, columnspan=2, pady=10)
+        self.capture_mode_frame.grid(row=1, column=0, columnspan=2, pady=10)
+        self.save_mode_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        self.download_mode_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        self.stop_upon_error_checkbutton.grid(
+            row=4, column=0, columnspan=2, pady=10)
+        self.import_json_button.grid(row=5, column=0, pady=10)
+        self.export_json_button.grid(row=5, column=1, pady=10)
 
         self.synchronise()
     
@@ -204,6 +270,45 @@ class LiveSettingsFrame(tk.Frame):
 
             self.download_mode_frame.download_mode,
             self.stop_upon_error_checkbutton.stop_upon_error)
+
+    def import_json(self) -> None:
+        """Allows the user to select a JSON settings file to import."""
+        file = filedialog.askopenfilename(
+            defaultextension=".json", filetypes=(("JSON", ".json"),),
+            title="Import JSON")
+        if not file:
+            return
+        try:
+            with open(file, "r", encoding="utf8") as f:
+                try:
+                    json_data = json.load(f)
+                except Exception:
+                    raise ValueError("Invalid JSON file.")
+            settings = LiveSettings.from_json(json_data)
+            self.image_mode_frame.import_settings(settings)
+            self.capture_mode_frame.import_settings(settings)
+            self.save_mode_frame.import_settings(settings)
+            self.download_mode_frame.download_mode = settings.download_mode
+            self.stop_upon_error_checkbutton.stop_upon_error = (
+                settings.stop_upon_error)
+            self.synchronise()
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Unfortunately, an error has occurred: {e}")
+
+    def export_json(self) -> None:
+        """Exports settings in JSON format."""
+        file = filedialog.asksaveasfilename(
+            defaultextension=".json", filetypes=(("JSON", ".json"),),
+            title="Export JSON")
+        if not file:
+            return
+        try:
+            with open(file, "w", encoding="utf8") as f:
+                f.write(self.settings.to_json())
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Unfortunately, an error has occurred: {e}")
 
 
 class LiveImageMode(tk.Frame):
@@ -270,6 +375,15 @@ class LiveImageMode(tk.Frame):
             return
         widgets.UrlSettingsToplevel(self, self.master.master.master.root)
 
+    def import_settings(self, settings: LiveSettings) -> None:
+        """Adjust settings based on imported input."""
+        self._mode.set(
+            (ImageMode.panorama, ImageMode.url).index(settings.image_mode))
+        self.panorama_settings = settings.panorama_settings
+        self.width = settings.url_width
+        self.height = settings.url_height
+        self.update_info_label()
+
 
 class LiveCaptureMode(tk.Frame):
     """Allows the user to select the mechanism of capturing URLs."""
@@ -333,6 +447,17 @@ class LiveCaptureMode(tk.Frame):
             FixedTimeIntervalToplevel(self)
             return
         KeybindToplevel(self)
+    
+    def import_settings(self, settings: LiveSettings) -> None:
+        """Adjusts settings based on imported input."""
+        self._mode.set(
+            (CaptureMode.new_lat_long, CaptureMode.fixed_time_intervals,
+                CaptureMode.keybind).index(settings.capture_mode))
+        self._fixed_time_interval_text = next(
+            (text for text, value in FIXED_TIME_INTERVALS.items()
+                if value == settings.fixed_time_interval))
+        self.keybind = settings.keybind
+        self.update_display()
 
 
 class FixedTimeIntervalToplevel(tk.Toplevel):
@@ -541,6 +666,15 @@ class LiveSaveMode(tk.Frame):
             self, self._save_mode, None, *options)
         self.save_mode_option_menu.grid(
             row=0, column=1, columnspan=2, padx=5, pady=5)
+    
+    def import_settings(self, settings: LiveSettings) -> None:
+        """"Adjusts settings based on imported input."""
+        self._save_mode.set(
+            next(text for text, value in PANORAMA_ID_SAVE_MODE_OPTIONS.items()
+                    if value == settings.save_mode))
+        self._save_folder.set(
+            str(settings.save_folder if settings.save_folder.is_dir()
+                    else "Not Set"))
 
 
 class LiveDownloadMode(tk.Frame):
@@ -562,6 +696,11 @@ class LiveDownloadMode(tk.Frame):
     def download_mode(self) -> DownloadMode:
         return (DownloadMode.queue, DownloadMode.on_demand)[self._mode.get()]
 
+    @download_mode.setter
+    def download_mode(self, download_mode: DownloadMode) -> None:
+        self._mode.set(
+            (DownloadMode.queue, DownloadMode.on_demand).index(download_mode))
+
 
 class LiveStopUponError(tk.Checkbutton):
     """
@@ -578,6 +717,10 @@ class LiveStopUponError(tk.Checkbutton):
     @property
     def stop_upon_error(self) -> bool:
         return self._stop_upon_error.get()
+    
+    @stop_upon_error.setter
+    def stop_upon_error(self, stop_upon_error: bool) -> None:
+        self._stop_upon_error.set(stop_upon_error)
 
 
 class LiveInfoFrame(tk.Frame):
