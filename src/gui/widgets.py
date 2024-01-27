@@ -79,10 +79,10 @@ class PanoramaIDSettingsToplevel(tk.Toplevel):
 class Logger(tk.Frame):
     """Text logging for good, neutral and bad messages."""
 
-    def __init__(self, master: tk.Widget) -> None:
+    def __init__(self, master: tk.Widget, width: int, height: int) -> None:
         super().__init__(master)
         self.textbox = tk.Text(
-            self, font=inter(11), width=64, height=25, state="disabled")
+            self, font=inter(11), width=width, height=height, state="disabled")
         self.scrollbar = tk.Scrollbar(
             self, orient="vertical", command=self.textbox.yview)
         self.textbox.config(yscrollcommand=self.scrollbar.set)
@@ -92,6 +92,10 @@ class Logger(tk.Frame):
 
         self.textbox.grid(row=0, column=0)
         self.scrollbar.grid(row=0, column=1, sticky="ns")
+    
+    @property
+    def text(self) -> str:
+        return self.textbox.get("1.0", "end").removesuffix("\n")
     
     def _log(self, text: str, tag: str) -> None:
         self.textbox.config(state="normal")

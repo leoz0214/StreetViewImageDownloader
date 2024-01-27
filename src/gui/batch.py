@@ -643,7 +643,7 @@ class BatchDownloadToplevel(tk.Toplevel):
             orient="horizontal")
         self.progress_label = tk.Label(self, font=inter(12))
         self.update_progress()
-        self.logger = widgets.Logger(self)
+        self.logger = widgets.Logger(self, width=64, height=25)
         self.cancel_button = tk.Button(
             self, font=inter(20), text="Cancel", width=15,
             bg=RED, activebackground=RED, command=self.cancel)

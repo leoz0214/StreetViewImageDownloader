@@ -2,7 +2,9 @@
 import enum
 import hashlib
 import json
+import os
 import pathlib
+import threading
 import tkinter as tk
 from contextlib import suppress
 from dataclasses import dataclass
@@ -10,9 +12,11 @@ from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
 
+from selenium.webdriver import Chrome
+
 import main
 import widgets
-from _utils import inter, BUTTON_COLOURS, GREEN, bool_to_state
+from _utils import inter, BUTTON_COLOURS, GREEN, RED, bool_to_state
 from api.panorama import PanoramaSettings
 from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT
 
@@ -114,7 +118,9 @@ class LiveSettings:
         expected_hash = hashlib.sha256(
             json.dumps(json_data).encode()).hexdigest()
         if integrity_hash != expected_hash:
-            raise ValueError("Data is not in its original form.")
+            raise ValueError(
+                "Data is not in its original form - "
+                "modification has taken place.")
         return LiveSettings(
             ImageMode(json_data["image_mode"]["image_mode"]),
             PanoramaSettings(*json_data["image_mode"]["panorama_settings"]),
@@ -169,6 +175,8 @@ KEYSYMS = {
     "Up": "↑", "Down": "↓", "Left": "←", "Right": "→"
 } | {f"F{f}": f"F{f}" for f in range(1, 13)}
 
+MAPS_URL = "https://www.google.com/maps"
+
 
 class LiveDownloading(tk.Frame):
     """Live downloading window."""
@@ -177,6 +185,8 @@ class LiveDownloading(tk.Frame):
         super().__init__(root)
         self.root = root
         self.root.title(f"{main.TITLE} - Live Downloading")
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.window = None
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Live Downloading")
@@ -204,12 +214,46 @@ class LiveDownloading(tk.Frame):
     
     def back(self) -> None:
         """Returns to the home screen."""
+        self.stop()
         self.destroy()
+        self.root.protocol("WM_DELETE_WINDOW", self.root.quit)
         main.MainMenu(self.root).pack()
     
+    def _live(self) -> None:
+        # Main live code run in the thread.
+        try:
+            self.window = Chrome()
+        except Exception as e:
+            messagebox.showerror(
+                "Error", 
+                    "Unfortunately, an error occurred "
+                    f"while initialising the window: {e}")
+            self.stop()
+            return
+        with suppress(Exception):
+            self.window.get(MAPS_URL)
+            while True:
+                pass
+        self.stop()
+        
     def start(self) -> None:
         """Opens the selenium window and starts the tracking."""
-        print(self.settings_frame.settings)
+        self.start_button.config(
+            text="Stop", bg=RED, activebackground=RED, command=self.stop)
+        threading.Thread(target=self._live, daemon=True).start()
+
+    def stop(self) -> None:
+        """Stops the live tracking."""
+        with suppress(Exception):
+            self.window.quit()
+        self.window = None
+        self.start_button.config(
+            text="Start", **BUTTON_COLOURS, command=self.start)
+    
+    def close(self) -> None:
+        """Closes the window, ensuring live mode is stopped."""
+        self.stop()
+        os._exit(0)
     
     def update_start_button_state(self, folder_set: bool) -> None:
         """Updates start button state based on inputs."""
@@ -728,3 +772,25 @@ class LiveInfoFrame(tk.Frame):
 
     def __init__(self, master: ttk.Notebook) -> None:
         super().__init__(master)
+        self.logger = widgets.Logger(self, width=64, height=20)
+        self.info_label = tk.Label(self, font=inter(12), text="Info")
+        self.export_log_button = tk.Button(
+            self, font=inter(15), text="Export Log", width=15,
+            **BUTTON_COLOURS, command=self.export_log)
+        
+        self.logger.pack(padx=10, pady=10)
+        self.info_label.pack(padx=10, pady=10)
+        self.export_log_button.pack(padx=10, pady=10)
+    
+    def export_log(self) -> None:
+        """Exports the log text."""
+        file = filedialog.asksaveasfilename(
+            defaultextension=".txt", filetypes=(("Text", ".txt"),))
+        if not file:
+            return
+        try:
+            with open(file, "w", encoding="utf8") as f:
+                f.write(self.logger.text)
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Unfortunately, an error has occurred: {e}")
