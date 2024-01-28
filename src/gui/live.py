@@ -12,6 +12,7 @@ import time
 import tkinter as tk
 from contextlib import suppress
 from dataclasses import dataclass
+from timeit import default_timer as timer
 from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
@@ -20,7 +21,8 @@ from selenium.webdriver import Chrome
 
 import main
 import widgets
-from _utils import inter, BUTTON_COLOURS, GREEN, RED, bool_to_state
+from _utils import (
+    inter, BUTTON_COLOURS, GREEN, RED, bool_to_state, format_seconds)
 from api.panorama import PanoramaSettings, _get_async_images, _combine_tiles
 from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT, parse_url, get_pil_image
 
@@ -181,6 +183,7 @@ KEYSYMS = {
 
 MAPS_URL = "https://www.google.com/maps"
 TIME_BETWEEN_CHECKS = 0.02
+TIME_BETWEEN_INFO_REFRESH_MS = 100
 
 
 class LiveDownloading(tk.Frame):
@@ -192,14 +195,33 @@ class LiveDownloading(tk.Frame):
         self.root.title(f"{main.TITLE} - Live Downloading")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
+        # Selenium Chrome window object.
         self.window = None
+        # Live downloading has been terminated.
         self.stopped = False
+        # Queue of URLs to download.
         self.download_queue = queue.Queue()
+        # Any exception that occurs in the downloading threads
+        # is written to this variable.
         self.exception = None
+        # The resulting image from a downloading thread.
         self.image = None
+        # Ensures expired downloads are ignored by incrementing
+        # the download ID per new download and upon stopping.
         self.download_id = 0
+        # Tracks the number of downloaded images in the session.
+        self.download_count = 0
+        # Similar to stopped, but compatible with the API.
         self.cancelled = False
+        # Flag indicating the main live loop should stop the session.
+        self.to_stop = False
+        # Currently stopping session.
+        # Prevents creating a new one until the previous one is ended.
         self.stopping = False
+        # Start timestamp (to track time elapsed).
+        self.start_time = None
+        # Timestamp of previous captured by fixed time intervals.
+        self.previous_time = None
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Live Downloading")
@@ -227,7 +249,7 @@ class LiveDownloading(tk.Frame):
     
     def back(self) -> None:
         """Returns to the home screen."""
-        self.stop()
+        self.to_stop = True
         self.destroy()
         self.root.protocol("WM_DELETE_WINDOW", self.root.quit)
         main.MainMenu(self.root).pack()
@@ -236,9 +258,8 @@ class LiveDownloading(tk.Frame):
         # Main live code run in the thread.
         try:
             self.window = Chrome()
-            if self.stopped:
-                self.stop(log=False)
-                self.stopped = False
+            if self.to_stop:
+                self.stop()
                 return
             date_time = dt.datetime.now().replace(microsecond=0)
             self.info_frame.logger.log_good(
@@ -261,7 +282,7 @@ class LiveDownloading(tk.Frame):
         seen_panorama_ids = set()
         try:
             self.window.get(MAPS_URL)
-            while not self.stopped:
+            while not self.to_stop:
                 settings = self.settings_frame.settings
                 try:
                     url = self.window.current_url
@@ -269,25 +290,34 @@ class LiveDownloading(tk.Frame):
                         break
                 except Exception:
                     break
+                match settings.capture_mode:
+                    case CaptureMode.new_lat_long:
+                        # No need to do anything for new lat/long (default).
+                        pass
+                    case CaptureMode.fixed_time_intervals:
+                        fixed_time_interval = settings.fixed_time_interval
+                        if (
+                            fixed_time_interval == -1 or
+                            timer() - self.previous_time < fixed_time_interval
+                        ):
+                            # Paused OR not time yet for the next capture.
+                            continue
+                        self.previous_time = timer()
+                    case CaptureMode.keybind:
+                        continue
                 try:
                     url_info = parse_url(url)
                 except ValueError:
                     continue
                 panorama_id = url_info.panorama_id
-                match settings.capture_mode:
-                    case CaptureMode.new_lat_long:
-                        if panorama_id in seen_panorama_ids:
-                            continue
-                        seen_panorama_ids.add(panorama_id)
-                        self.info_frame.logger.log_neutral(
-                            f"Captured URL: {url}")
-                        self._add_to_queue(
-                            url,
-                            settings.download_mode == DownloadMode.on_demand)
-                    case CaptureMode.fixed_time_intervals:
-                        pass
-                    case CaptureMode.keybind:
-                        pass
+                if panorama_id in seen_panorama_ids:
+                    continue
+                seen_panorama_ids.add(panorama_id)
+                self.info_frame.logger.log_neutral(
+                    f"Captured URL: {url}")
+                self._add_to_queue(
+                    url,
+                    settings.download_mode == DownloadMode.on_demand)
                 time.sleep(TIME_BETWEEN_CHECKS)
         except Exception as e:
             date_time = dt.datetime.now().replace(microsecond=0)
@@ -333,11 +363,12 @@ class LiveDownloading(tk.Frame):
             if self.exception is not None:
                 self.info_frame.logger.log_bad(f"Error: {self.exception}")
                 if settings.stop_upon_error:
-                    self.stop()
+                    self.to_stop = True
                 self.exception = None
             if self.image is not None:
                 self._save_image(
-                    settings, url_info.latitude, url_info.longitude)
+                    settings, url_info.latitude, url_info.longitude,
+                    url_info.panorama_id)
                 self.image = None
     
     def _download_panorama_image(
@@ -368,7 +399,7 @@ class LiveDownloading(tk.Frame):
     
     def _save_image(
         self, settings: LiveSettings,
-        latitude: float, longitude: float, panorama_id: str = None
+        latitude: float, longitude: float, panorama_id: str
     ) -> None:
         folder = settings.save_folder
         match settings.save_mode:
@@ -392,15 +423,22 @@ class LiveDownloading(tk.Frame):
             stem = save_path.stem
             while (save_path := folder / f"{stem} ({n}).jpg").exists():
                 n += 1
+        if self.to_stop:
+            return
         try:
             self.image.save(save_path, format="jpeg")
             date_time = dt.datetime.now().replace(microsecond=0)
+            if self.to_stop:
+                return
+            self.download_count += 1
             self.info_frame.logger.log_good(
                 f"Successfully saved image to {save_path} at {date_time}")
         except Exception as e:
+            if self.to_stop:
+                return
             self.info_frame.logger.log_bad(f"Error while saving: {e}")
             if settings.stop_upon_error:
-                self.stop()
+                self.to_stop = True
 
     def _add_to_queue(self, url: str, on_demand: bool) -> None:
         # Adds a URL to the queue to be downloaded.
@@ -415,12 +453,17 @@ class LiveDownloading(tk.Frame):
             time.sleep(TIME_BETWEEN_CHECKS)
         self.stopped = False
         self.cancelled = False
+        self.download_count = 0
+        self.start_time = timer()
+        self.previous_time = timer()
         self.start_button.config(
-            text="Stop", bg=RED, activebackground=RED, command=self.stop)
+            text="Stop", bg=RED, activebackground=RED,
+            command=lambda: setattr(self, "to_stop", True))
         threading.Thread(target=self._live, daemon=True).start()
 
     def stop(self) -> None:
         """Stops the live tracking."""
+        self.to_stop = False
         self.stopping = True
         with suppress(Exception):
             self.window.quit()
@@ -435,6 +478,7 @@ class LiveDownloading(tk.Frame):
             self.start_button.config(
                 text="Start", **BUTTON_COLOURS, command=self.start)
         self.stopping = False
+        self.to_stop = False
     
     def close(self) -> None:
         """Closes the window, ensuring live mode is stopped."""
@@ -665,8 +709,12 @@ class LiveCaptureMode(tk.Frame):
             case CaptureMode.new_lat_long:
                 text = "URLs with a new latitude/longitude will be captured."
             case CaptureMode.fixed_time_intervals:
-                text = (
-                    f"Time between captures: {self._fixed_time_interval_text}")
+                if self.fixed_time_interval == -1:
+                    text = "Capturing paused"
+                else:
+                    text = (
+                        "Time between captures: "
+                        f"{self._fixed_time_interval_text}")
             case CaptureMode.keybind:
                 text = f"Keybind: {' '.join(self.keybind)}"
         self.info_label.config(text=text)
@@ -879,7 +927,7 @@ class LiveSaveMode(tk.Frame):
         folder = filedialog.askdirectory(title="Select Save Folder")
         if not folder:
             return
-        self._save_folder.set(folder)
+        self._save_folder.set(str(pathlib.Path(folder)))
         self.master.synchronise()
     
     def update_options(self, is_panorama_mode: bool) -> None:
@@ -959,8 +1007,7 @@ class LiveInfoFrame(tk.Frame):
     def __init__(self, master: ttk.Notebook) -> None:
         super().__init__(master)
         self.logger = widgets.Logger(self, width=100, height=20)
-        self.info_label = tk.Label(
-            self, font=inter(12), text="Currently inactive")
+        self.info_label = tk.Label(self, font=inter(12))
         self.export_log_button = tk.Button(
             self, font=inter(15), text="Export Log", width=15,
             **BUTTON_COLOURS, command=self.export_log)
@@ -968,6 +1015,42 @@ class LiveInfoFrame(tk.Frame):
         self.logger.pack(padx=10, pady=10)
         self.info_label.pack(padx=10, pady=10)
         self.export_log_button.pack(padx=10, pady=10)
+
+        self.info_label.after(
+            TIME_BETWEEN_INFO_REFRESH_MS, self.update_info)
+    
+    def update_info(self) -> None:
+        """Updates the info label and window title based on download state."""
+        title = f"{main.TITLE} - Live Downloading"
+        with suppress(Exception):
+            if self.master.master.window is None:
+                text = "Currently inactive"
+            else:
+                download_count = self.master.master.download_count
+                time_elapsed = format_seconds(
+                    timer() - self.master.master.start_time)
+                in_queue = self.master.master.download_queue.qsize()
+                text = " | ".join((
+                    f"Download count: {download_count}",
+                    f"Time elapsed: {time_elapsed}", f"In queue: {in_queue}"))
+                settings = self.master.master.settings_frame.settings
+                if settings.capture_mode == CaptureMode.fixed_time_intervals:
+                    if settings.fixed_time_interval == -1:
+                        # The user has paused the live downloading.
+                        text = f"{text} | Capturing paused"
+                    else:
+                        time_until_next_capture = format_seconds(
+                            settings.fixed_time_interval - (
+                                timer() - self.master.master.previous_time
+                            ))[3:]
+                        text = (
+                            f"{text} | Time until next capture: "
+                            f"{time_until_next_capture}")
+                title = f"{title} - {text}"
+            self.info_label.config(text=text)
+            self.master.master.root.title(title)
+            self.info_label.after(
+                TIME_BETWEEN_INFO_REFRESH_MS, self.update_info)
     
     def export_log(self) -> None:
         """Exports the log text."""
