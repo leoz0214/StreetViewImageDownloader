@@ -1,10 +1,14 @@
 """Live image downloading using a tracked selenium window."""
+import asyncio
+import datetime as dt
 import enum
 import hashlib
 import json
 import os
 import pathlib
+import queue
 import threading
+import time
 import tkinter as tk
 from contextlib import suppress
 from dataclasses import dataclass
@@ -17,8 +21,8 @@ from selenium.webdriver import Chrome
 import main
 import widgets
 from _utils import inter, BUTTON_COLOURS, GREEN, RED, bool_to_state
-from api.panorama import PanoramaSettings
-from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT
+from api.panorama import PanoramaSettings, _get_async_images, _combine_tiles
+from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT, parse_url, get_pil_image
 
 
 class ImageMode(enum.Enum):
@@ -176,6 +180,7 @@ KEYSYMS = {
 } | {f"F{f}": f"F{f}" for f in range(1, 13)}
 
 MAPS_URL = "https://www.google.com/maps"
+TIME_BETWEEN_CHECKS = 0.02
 
 
 class LiveDownloading(tk.Frame):
@@ -186,7 +191,15 @@ class LiveDownloading(tk.Frame):
         self.root = root
         self.root.title(f"{main.TITLE} - Live Downloading")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+
         self.window = None
+        self.stopped = False
+        self.download_queue = queue.Queue()
+        self.exception = None
+        self.image = None
+        self.download_id = 0
+        self.cancelled = False
+        self.stopping = False
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Live Downloading")
@@ -223,32 +236,205 @@ class LiveDownloading(tk.Frame):
         # Main live code run in the thread.
         try:
             self.window = Chrome()
+            if self.stopped:
+                self.stop(log=False)
+                self.stopped = False
+                return
+            date_time = dt.datetime.now().replace(microsecond=0)
+            self.info_frame.logger.log_good(
+                f"Initialised window at {date_time}")
         except Exception as e:
             messagebox.showerror(
                 "Error", 
                     "Unfortunately, an error occurred "
                     f"while initialising the window: {e}")
+            date_time = dt.datetime.now().replace(microsecond=0)
+            self.info_frame.logger.log_bad(
+                f"An initialisation error occurred at {date_time}")
             self.stop()
+            self.info_frame.logger.log_bad(
+                f"Live tracking stopped at {date_time}")
             return
-        with suppress(Exception):
+        threading.Thread(target=self._handle_queue, daemon=True).start()
+        # Unique latitude/longitude maintenance
+        # as each lat/long has a unique panorama ID.
+        seen_panorama_ids = set()
+        try:
             self.window.get(MAPS_URL)
-            while True:
-                pass
+            while not self.stopped:
+                settings = self.settings_frame.settings
+                try:
+                    url = self.window.current_url
+                    if url is None:
+                        break
+                except Exception:
+                    break
+                try:
+                    url_info = parse_url(url)
+                except ValueError:
+                    continue
+                panorama_id = url_info.panorama_id
+                match settings.capture_mode:
+                    case CaptureMode.new_lat_long:
+                        if panorama_id in seen_panorama_ids:
+                            continue
+                        seen_panorama_ids.add(panorama_id)
+                        self.info_frame.logger.log_neutral(
+                            f"Captured URL: {url}")
+                        self._add_to_queue(
+                            url,
+                            settings.download_mode == DownloadMode.on_demand)
+                    case CaptureMode.fixed_time_intervals:
+                        pass
+                    case CaptureMode.keybind:
+                        pass
+                time.sleep(TIME_BETWEEN_CHECKS)
+        except Exception as e:
+            date_time = dt.datetime.now().replace(microsecond=0)
+            self.info_frame.logger.log_bad(f"Fatal error at {date_time}: {e}")
         self.stop()
+        date_time = dt.datetime.now().replace(microsecond=0)
+        self.info_frame.logger.log_bad(f"Live tracking stopped at {date_time}")
+    
+    def _handle_queue(self) -> None:
+        # Handles the downloading of URLs as they appear in the queue.
+        while True:
+            if self.stopped:
+                return
+            time.sleep(TIME_BETWEEN_CHECKS)
+            settings = self.settings_frame.settings
+            if not self.download_queue.qsize():
+                continue
+            try:
+                url = self.download_queue.get(block=False)
+            except queue.Empty:
+                continue
+            url_info = parse_url(url)
+            self.download_id += 1
+            if settings.image_mode == ImageMode.panorama:
+                target = lambda: self._download_panorama_image(
+                    url_info.panorama_id, settings.panorama_settings,
+                    self.download_id)
+            else:
+                target = lambda: self._download_url_image(
+                    url, settings.url_width, settings.url_height,
+                    self.download_id)
+            self.info_frame.logger.log_neutral(f"Downloading URL: {url}")
+            threading.Thread(target=target, daemon=True).start()
+            while (
+                self.image is None and self.exception is None
+                and not self.stopped
+            ):
+                time.sleep(TIME_BETWEEN_CHECKS)
+            if self.stopped:
+                return
+            # Refresh settings after processing.
+            settings = self.settings_frame.settings
+            if self.exception is not None:
+                self.info_frame.logger.log_bad(f"Error: {self.exception}")
+                if settings.stop_upon_error:
+                    self.stop()
+                self.exception = None
+            if self.image is not None:
+                self._save_image(
+                    settings, url_info.latitude, url_info.longitude)
+                self.image = None
+    
+    def _download_panorama_image(
+        self, panorama_id: str, settings: PanoramaSettings, download_id: int
+    ) -> None:
+        tiles = [[None] * settings.width for _ in range(settings.height)]
+        try:
+            asyncio.set_event_loop_policy(
+                asyncio.WindowsSelectorEventLoopPolicy())
+            asyncio.run(_get_async_images(tiles, panorama_id, settings, self))
+            image = _combine_tiles(tiles, True, self)
+            if download_id == self.download_id:
+                self.image = image
+        except Exception as e:
+            if download_id == self.download_id:
+                self.exception = e
+    
+    def _download_url_image(
+        self, url: str, width: int, height: int, download_id: int
+    ) -> None:
+        try:
+            image = get_pil_image(url, width, height)
+            if download_id == self.download_id:
+                self.image = image
+        except Exception as e:
+            if download_id == self.download_id:
+                self.exception = e
+    
+    def _save_image(
+        self, settings: LiveSettings,
+        latitude: float, longitude: float, panorama_id: str = None
+    ) -> None:
+        folder = settings.save_folder
+        match settings.save_mode:
+            case SaveMode.smallest_integer:
+                n = 0
+                while (save_path := folder / f"{n}.jpg").exists():
+                    n += 1
+            case SaveMode.unix_timestamp:
+                timestamp = int(time.time())
+                save_path = folder / f"{timestamp}.jpg"
+            case SaveMode.date_time:
+                date_time = dt.datetime.now().replace(
+                    microsecond=0).isoformat().replace(":", ".")
+                save_path = folder / f"{date_time}.jpg"
+            case SaveMode.lat_long:
+                save_path = folder / f"{latitude}_{longitude}.jpg"
+            case SaveMode.panorama_id:
+                save_path = folder / f"{panorama_id}.jpg"
+        if save_path.exists():
+            n = 1
+            stem = save_path.stem
+            while (save_path := folder / f"{stem} ({n}).jpg").exists():
+                n += 1
+        try:
+            self.image.save(save_path, format="jpeg")
+            date_time = dt.datetime.now().replace(microsecond=0)
+            self.info_frame.logger.log_good(
+                f"Successfully saved image to {save_path} at {date_time}")
+        except Exception as e:
+            self.info_frame.logger.log_bad(f"Error while saving: {e}")
+            if settings.stop_upon_error:
+                self.stop()
+
+    def _add_to_queue(self, url: str, on_demand: bool) -> None:
+        # Adds a URL to the queue to be downloaded.
+        if on_demand:
+            # Clear queue - max one item at a time.
+            self.download_queue = queue.Queue()
+        self.download_queue.put(url)
         
     def start(self) -> None:
         """Opens the selenium window and starts the tracking."""
+        while self.stopping:
+            time.sleep(TIME_BETWEEN_CHECKS)
+        self.stopped = False
+        self.cancelled = False
         self.start_button.config(
             text="Stop", bg=RED, activebackground=RED, command=self.stop)
         threading.Thread(target=self._live, daemon=True).start()
 
     def stop(self) -> None:
         """Stops the live tracking."""
+        self.stopping = True
         with suppress(Exception):
             self.window.quit()
+        self.download_id += 1
         self.window = None
-        self.start_button.config(
-            text="Start", **BUTTON_COLOURS, command=self.start)
+        self.stopped = True
+        self.image = None
+        self.exception = None
+        self.download_queue = queue.Queue()
+        self.cancelled = True
+        with suppress(tk.TclError):
+            self.start_button.config(
+                text="Start", **BUTTON_COLOURS, command=self.start)
+        self.stopping = False
     
     def close(self) -> None:
         """Closes the window, ensuring live mode is stopped."""
@@ -772,8 +958,9 @@ class LiveInfoFrame(tk.Frame):
 
     def __init__(self, master: ttk.Notebook) -> None:
         super().__init__(master)
-        self.logger = widgets.Logger(self, width=64, height=20)
-        self.info_label = tk.Label(self, font=inter(12), text="Info")
+        self.logger = widgets.Logger(self, width=100, height=20)
+        self.info_label = tk.Label(
+            self, font=inter(12), text="Currently inactive")
         self.export_log_button = tk.Button(
             self, font=inter(15), text="Export Log", width=15,
             **BUTTON_COLOURS, command=self.export_log)
@@ -785,7 +972,8 @@ class LiveInfoFrame(tk.Frame):
     def export_log(self) -> None:
         """Exports the log text."""
         file = filedialog.asksaveasfilename(
-            defaultextension=".txt", filetypes=(("Text", ".txt"),))
+            defaultextension=".txt", filetypes=(("Text", ".txt"),),
+            title="Export Log")
         if not file:
             return
         try:

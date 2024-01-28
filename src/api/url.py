@@ -106,12 +106,14 @@ def parse_url(url: str) -> StreetViewURL:
         raise ValueError("Invalid URL.")
     try:
         latitude = float(latitude)
-        assert MIN_LATITUDE <= latitude <= MAX_LATITUDE
+        if not MIN_LATITUDE <= latitude <= MAX_LATITUDE:
+            raise ValueError
     except Exception:
         raise ValueError("Invalid latitude.")
     try:
         longitude = float(longitude)
-        assert MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
+        if not MIN_LONGITUDE <= longitude <= MAX_LONGITUDE:
+            raise ValueError
     except Exception:
         raise ValueError("Invalid longitude.")
     suffixes = URL_SUFFIXES.copy()
@@ -123,16 +125,20 @@ def parse_url(url: str) -> StreetViewURL:
                 try:
                     match suffix:
                         case "a":
-                            assert parameter in ("2a", "3a")
+                            if parameter not in ("2a", "3a"):
+                                raise ValueError
                         case "y":
                             fov = float(parameter.removesuffix("y"))
-                            assert MIN_FOV <= fov <= MAX_FOV
+                            if not MIN_FOV <= fov <= MAX_FOV:
+                                raise ValueError
                         case "h":
                             yaw = float(parameter.removesuffix("h"))
-                            assert MIN_YAW <= yaw < MAX_YAW
+                            if not MIN_YAW <= yaw < MAX_YAW:
+                                raise ValueError
                         case "t":
                             pitch = float(parameter.removesuffix("t"))
-                            assert MIN_PITCH <= pitch <= MAX_PITCH
+                            if not MIN_PITCH <= pitch <= MAX_PITCH:
+                                raise ValueError
                 except Exception:
                     raise ValueError(f"Invalid '{suffix}' value.")
                 suffixes.remove(suffix)
