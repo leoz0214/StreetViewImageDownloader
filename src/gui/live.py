@@ -17,12 +17,15 @@ from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
 
+import psutil
+from pynput import keyboard
 from selenium.webdriver import Chrome
 
 import main
 import widgets
 from _utils import (
-    inter, BUTTON_COLOURS, GREEN, RED, bool_to_state, format_seconds)
+    inter, BUTTON_COLOURS, GREEN, RED, bool_to_state, format_seconds,
+    load_cpp_foreground_pid_library)
 from api.panorama import PanoramaSettings, _get_async_images, _combine_tiles
 from api.url import DEFAULT_WIDTH, DEFAULT_HEIGHT, parse_url, get_pil_image
 
@@ -180,10 +183,19 @@ KEYSYMS = {
     "period": ".", "greater": ">", "less": "<", "question": "?", "slash": "/",
     "Up": "↑", "Down": "↓", "Left": "←", "Right": "→"
 } | {f"F{f}": f"F{f}" for f in range(1, 13)}
+# Ascii control characters. Index = binary value.
+CONTROL_CHARACTERS = "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_"
+CONTROL_KEYS = (keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r)
+SHIFT_KEYS = (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r)
+ALT_KEYS = (
+    keyboard.Key.alt, keyboard.Key.alt_gr,
+    keyboard.Key.alt_l, keyboard.Key.alt_r)
 
 MAPS_URL = "https://www.google.com/maps"
 TIME_BETWEEN_CHECKS = 0.02
 TIME_BETWEEN_INFO_REFRESH_MS = 100
+
+get_foreground_pid = load_cpp_foreground_pid_library().get_foreground_pid
 
 
 class LiveDownloading(tk.Frame):
@@ -222,6 +234,18 @@ class LiveDownloading(tk.Frame):
         self.start_time = None
         # Timestamp of previous captured by fixed time intervals.
         self.previous_time = None
+        # Keys pressed (for keybind capture).
+        self.keys_pressed = set()
+        # Cumulative keys pressed.
+        self.keys_pressed_count = 0
+        # Cumulative keys released.
+        self.keys_released_count = 0
+        # Previous key pressed (ignore hold down).
+        self.previous_key_press = None
+        # Shift states currently active (multiple possible).
+        self.shift_states = set()
+        # Alt states currently active (multiple possible).
+        self.alt_states = set()
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Live Downloading")
@@ -261,6 +285,8 @@ class LiveDownloading(tk.Frame):
             if self.to_stop:
                 self.stop()
                 return
+            process = psutil.Process(self.window.service.process.pid)
+            pids = {child.pid for child in process.children()}
             date_time = dt.datetime.now().replace(microsecond=0)
             self.info_frame.logger.log_good(
                 f"Initialised window at {date_time}")
@@ -277,6 +303,9 @@ class LiveDownloading(tk.Frame):
                 f"Live tracking stopped at {date_time}")
             return
         threading.Thread(target=self._handle_queue, daemon=True).start()
+        keyboard_listener = keyboard.Listener(
+            on_press=self._on_key_press, on_release=self._on_key_release)
+        keyboard_listener.start()
         # Unique latitude/longitude maintenance
         # as each lat/long has a unique panorama ID.
         seen_panorama_ids = set()
@@ -304,6 +333,8 @@ class LiveDownloading(tk.Frame):
                             continue
                         self.previous_time = timer()
                     case CaptureMode.keybind:
+                        foreground_pid = get_foreground_pid()
+                        print(foreground_pid in pids)
                         continue
                 try:
                     url_info = parse_url(url)
@@ -322,9 +353,56 @@ class LiveDownloading(tk.Frame):
         except Exception as e:
             date_time = dt.datetime.now().replace(microsecond=0)
             self.info_frame.logger.log_bad(f"Fatal error at {date_time}: {e}")
+        keyboard_listener.stop()
         self.stop()
         date_time = dt.datetime.now().replace(microsecond=0)
         self.info_frame.logger.log_bad(f"Live tracking stopped at {date_time}")
+    
+    def _on_key_press(self, key) -> None:
+        if key != self.previous_key_press:
+            self.keys_pressed_count += 1
+            self.previous_key_press = key
+            if key in SHIFT_KEYS:
+                self.shift_states.add(key)
+            elif key in ALT_KEYS:
+                self.alt_states.add(key)
+            elif key in CONTROL_KEYS:
+                return
+            else:
+                parts = []
+                if self.shift_states:
+                    parts.append("Shift")
+                if self.alt_states:
+                    parts.append("Alt")
+                if ord(key.char) < 32:
+                    parts.append("Ctrl")
+                    parts.append(CONTROL_CHARACTERS[ord(key.char)])
+                else:
+                    parts.append(key.char)
+                self.keys_pressed.add("+".join(parts))
+    
+    def _on_key_release(self, key) -> None:
+        self.keys_released_count += 1
+        if key in SHIFT_KEYS:
+            self.shift_states.remove(key)
+        if key in ALT_KEYS:
+            self.alt_states.remove(key)
+        if self.keys_pressed_count == self.keys_released_count:
+            # Reset unnecessary - equal, ready for next press/release cycle.
+            if self._is_keybind():
+                print(self.keys_pressed)
+            # Do reset pressed keys and previous pressed key, however.
+            self.keys_pressed.clear()
+            self.previous_key_press = None
+    
+    def _is_keybind(self) -> bool:
+        # The matching keybind as per the settings has been registered.
+        keybind_lists = []
+        for keys in (self.keys_pressed, self.settings_frame.settings.keybind):
+            keybind_list = sorted(
+                sorted(keybind.split("+")) for keybind in keys)
+            keybind_lists.append(keybind_list)
+        return keybind_lists[0] == keybind_lists[1]
     
     def _handle_queue(self) -> None:
         # Handles the downloading of URLs as they appear in the queue.
@@ -808,6 +886,7 @@ class KeybindToplevel(tk.Toplevel):
         
         self.bind("<KeyPress>", self.key_press)
         self.bind("<KeyRelease>", self.key_release)
+        self.bind("<FocusOut>", lambda *_: self.focus_out())
         
         self.title_label.pack(padx=10, pady=10)
         self.info_label.pack(padx=10, pady=10)
@@ -868,12 +947,28 @@ class KeybindToplevel(tk.Toplevel):
             return
         self.keys_released.add(self._get_key(event))
         if self.all_released and len(self.keys_pressed) <= MAX_KEYBIND_LENGTH:
-            self.keybind = tuple(sorted(self.keys_pressed))
-            self.keybind_label.config(
-                text=f"Current keybind: {' '.join(self.keybind)}")
+            final_keys_pressed = []
+            for key in self.keys_pressed:
+                if "++" in key:
+                    break
+                parts = key.split("+")
+                if "Ctrl" in parts:
+                    parts[-1] = parts[-1].upper()
+                    if parts[-1] not in CONTROL_CHARACTERS:
+                        break
+                final_keys_pressed.append("+".join(parts))
+            else:
+                self.keybind = tuple(sorted(final_keys_pressed))
+                self.keybind_label.config(
+                    text=f"Current keybind: {' '.join(self.keybind)}")
         if self.all_released or self.no_pressed:
             self.keys_pressed.clear()
             self.keys_released.clear()
+    
+    def focus_out(self) -> None:
+        """Window lost focus, cancel keybind setting."""
+        self.keys_pressed.clear()
+        self.keys_released.clear()
     
     def save(self) -> None:
         """Saves the currently set keybind."""

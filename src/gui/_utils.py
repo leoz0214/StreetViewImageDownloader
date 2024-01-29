@@ -1,4 +1,5 @@
 """Utilities for the GUI."""
+import ctypes
 import pathlib
 import tkinter as tk
 from tkinter.font import Font
@@ -7,6 +8,8 @@ import pyglet
 
 
 BIN_FOLDER = pathlib.Path(__file__).parent / "bin"
+CPP_FOREGROUND_PID_LIBRARY = (
+    pathlib.Path(__file__).parent / "cpp" / "foreground.so")
 # Load Inter font downloaded online.
 pyglet.font.add_file(str(BIN_FOLDER / "Inter.ttf"))
 
@@ -61,3 +64,8 @@ def format_seconds(seconds: float) -> str:
 def int_if_possible(float_: float) -> int | float:
     """Converts a float to an integer if it is indeed an integer."""
     return int(float_) if float_ % 1 == 0 else float_
+
+
+def load_cpp_foreground_pid_library() -> ctypes.CDLL:
+    """Returns the library for retrieving the foreground process PID."""
+    return ctypes.CDLL(str(CPP_FOREGROUND_PID_LIBRARY))
