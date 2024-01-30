@@ -19,7 +19,7 @@ from tkinter import ttk
 
 import psutil
 from pynput import keyboard
-from selenium.webdriver import Chrome
+from selenium.webdriver import Chrome, ChromeOptions
 
 import main
 import widgets
@@ -166,7 +166,7 @@ FIXED_TIME_INTERVALS = {
     "10 minutes": 600, "Paused": -1
 }
 DEFAULT_FIXED_TIME_INTERVAL = "15 seconds"
-DEFAULT_KEYBIND = ("s",)
+DEFAULT_KEYBIND = ("q",)
 MAX_KEYBIND_LENGTH = 3
 STATE_NAMES = {"Control": "Ctrl", "Shift": "Shift", "Alt": "Alt"}
 STATE_MASKS = {"Control": 0b00000100, "Shift": 0b00000001, "Alt": 131072}
@@ -291,7 +291,12 @@ class LiveDownloading(tk.Frame):
     def _live(self) -> None:
         # Main live code run in the thread.
         try:
-            self.window = Chrome()
+            options = ChromeOptions()
+            # Do not display 'Chrome is being automated' banner.
+            # In fact, it is not in the case of this program!
+            options.add_experimental_option(
+                "excludeSwitches",["enable-automation"])
+            self.window = Chrome(options=options)
             if self.to_stop:
                 self.stop()
                 return
@@ -343,6 +348,7 @@ class LiveDownloading(tk.Frame):
                                 continue
                             self.previous_time = timer()
                         case CaptureMode.keybind:
+                            # Keybind not registered, continue on.
                             continue
                 try:
                     url_info = parse_url(url)
@@ -352,6 +358,8 @@ class LiveDownloading(tk.Frame):
                         self.info_frame.logger.log_bad(
                             f"Error at {date_time}: {e}")
                         self.keybind_registered = False
+                    if settings.stop_upon_error:
+                        break
                     continue
                 panorama_id = url_info.panorama_id
                 # Reject URL if lat/long already registered
@@ -468,7 +476,6 @@ class LiveDownloading(tk.Frame):
             if self.stopped:
                 return
             time.sleep(TIME_BETWEEN_CHECKS)
-            settings = self.settings_frame.settings
             if not self.download_queue.qsize():
                 continue
             try:
@@ -477,6 +484,7 @@ class LiveDownloading(tk.Frame):
                 continue
             url_info = parse_url(url)
             self.download_id += 1
+            settings = self.settings_frame.settings
             if settings.image_mode == ImageMode.panorama:
                 target = lambda: self._download_panorama_image(
                     url_info.panorama_id, settings.panorama_settings,
@@ -497,7 +505,9 @@ class LiveDownloading(tk.Frame):
             # Refresh settings after processing.
             settings = self.settings_frame.settings
             if self.exception is not None:
-                self.info_frame.logger.log_bad(f"Error: {self.exception}")
+                date_time = dt.datetime.now().replace(microsecond=0)
+                self.info_frame.logger.log_bad(
+                    f"Error at {date_time}: {self.exception}")
                 if settings.stop_upon_error:
                     self.to_stop = True
                 self.exception = None
@@ -561,9 +571,9 @@ class LiveDownloading(tk.Frame):
                 n += 1
         if self.to_stop:
             return
+        date_time = dt.datetime.now().replace(microsecond=0)
         try:
             self.image.save(save_path, format="jpeg")
-            date_time = dt.datetime.now().replace(microsecond=0)
             if self.to_stop:
                 return
             self.download_count += 1
@@ -572,7 +582,8 @@ class LiveDownloading(tk.Frame):
         except Exception as e:
             if self.to_stop:
                 return
-            self.info_frame.logger.log_bad(f"Error while saving: {e}")
+            self.info_frame.logger.log_bad(
+                f"Error while saving at {date_time}: {e}")
             if settings.stop_upon_error:
                 self.to_stop = True
 
@@ -582,6 +593,29 @@ class LiveDownloading(tk.Frame):
             # Clear queue - max one item at a time.
             self.download_queue = queue.Queue()
         self.download_queue.put(url)
+    
+    def reset_timer(self) -> None:
+        """
+        Upon changing the fixed time intervals setting,
+        reset the timer so that the first capture of the new setting
+        will occur after the new fixed time interval.
+        """
+        self.previous_time = timer()
+    
+    def reset_queue(self) -> None:
+        """
+        Upon changing the download mode setting to on demand,
+        limit the queue length to 1 and retaining the most recently
+        captured URL."
+        """
+        if self.download_queue.qsize() <= 1:
+            return
+        original_queue = self.download_queue
+        self.download_queue = queue.Queue()
+        while original_queue.qsize() > 1:
+            original_queue.get(block=False)
+        with suppress(queue.Empty):
+            self.download_queue.put(original_queue.get(block=False))
         
     def start(self) -> None:
         """Opens the selenium window and starts the tracking."""
@@ -839,6 +873,8 @@ class LiveCaptureMode(tk.Frame):
         self.update_info_label()
         self.edit_button.config(
             state=bool_to_state(self.capture_mode != CaptureMode.new_lat_long))
+        if self.capture_mode == CaptureMode.fixed_time_intervals:
+            self.master.master.master.reset_timer()
 
     def update_info_label(self) -> None:
         """Updates the information label when settings are changed."""
@@ -852,6 +888,7 @@ class LiveCaptureMode(tk.Frame):
                     text = (
                         "Time between captures: "
                         f"{self._fixed_time_interval_text}")
+                self.master.master.master.reset_timer()
             case CaptureMode.keybind:
                 text = f"Keybind: {' '.join(self.keybind)}"
         self.info_label.config(text=text)
@@ -1115,6 +1152,7 @@ class LiveDownloadMode(tk.Frame):
     def __init__(self, master: LiveSettingsFrame) -> None:
         super().__init__(master)
         self._mode = tk.IntVar(value=DEFAULT_DOWNLOAD_MODE)
+        self._mode.trace_add("write", lambda *_: self.update_mode())
         self.label = tk.Label(self, font=inter(20), text="Download Mode:")
         self.label.grid(row=0, column=0, padx=5, pady=5)
         for value, text in enumerate(("Queue", "On Demand")):
@@ -1132,6 +1170,14 @@ class LiveDownloadMode(tk.Frame):
     def download_mode(self, download_mode: DownloadMode) -> None:
         self._mode.set(
             (DownloadMode.queue, DownloadMode.on_demand).index(download_mode))
+    
+    def update_mode(self) -> None:
+        """
+        Updates the download mode, resetting the queue to on demand
+        if the on demand setting is selected.
+        """
+        if self.download_mode == DownloadMode.on_demand:
+            self.master.master.master.reset_queue()
 
 
 class LiveStopUponError(tk.Checkbutton):
