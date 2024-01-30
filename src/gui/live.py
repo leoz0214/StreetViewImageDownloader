@@ -190,6 +190,14 @@ SHIFT_KEYS = (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r)
 ALT_KEYS = (
     keyboard.Key.alt, keyboard.Key.alt_gr,
     keyboard.Key.alt_l, keyboard.Key.alt_r)
+# Special pynput keys mapped to keysyms.
+SPECIAL_KEYS = {
+    keyboard.Key.tab: "Tab", keyboard.Key.insert: "Insert",
+    keyboard.Key.delete: "Delete", keyboard.Key.backspace: "BackSpace",
+    keyboard.Key.enter: "Return",
+    keyboard.Key.up: "Up", keyboard.Key.down: "Down",
+    keyboard.Key.left: "Left", keyboard.Key.right: "Right"
+}
 
 MAPS_URL = "https://www.google.com/maps"
 TIME_BETWEEN_CHECKS = 0.02
@@ -246,6 +254,8 @@ class LiveDownloading(tk.Frame):
         self.shift_states = set()
         # Alt states currently active (multiple possible).
         self.alt_states = set()
+        # Keybind registered (pressed and capture mode set to keybind).
+        self.keybind_registered = False
 
         self.title = tk.Label(
             self, font=inter(25, True), text="Live Downloading")
@@ -285,8 +295,6 @@ class LiveDownloading(tk.Frame):
             if self.to_stop:
                 self.stop()
                 return
-            process = psutil.Process(self.window.service.process.pid)
-            pids = {child.pid for child in process.children()}
             date_time = dt.datetime.now().replace(microsecond=0)
             self.info_frame.logger.log_good(
                 f"Initialised window at {date_time}")
@@ -319,30 +327,41 @@ class LiveDownloading(tk.Frame):
                         break
                 except Exception:
                     break
-                match settings.capture_mode:
-                    case CaptureMode.new_lat_long:
-                        # No need to do anything for new lat/long (default).
-                        pass
-                    case CaptureMode.fixed_time_intervals:
-                        fixed_time_interval = settings.fixed_time_interval
-                        if (
-                            fixed_time_interval == -1 or
-                            timer() - self.previous_time < fixed_time_interval
-                        ):
-                            # Paused OR not time yet for the next capture.
+                if not self.keybind_registered:
+                    match settings.capture_mode:
+                        case CaptureMode.new_lat_long:
+                            # No need to do anything (default).
+                            pass
+                        case CaptureMode.fixed_time_intervals:
+                            fixed_time_interval = settings.fixed_time_interval
+                            if (
+                                fixed_time_interval == -1 or
+                                timer() - self.previous_time
+                                    < fixed_time_interval
+                            ):
+                                # Paused OR not time yet for the next capture.
+                                continue
+                            self.previous_time = timer()
+                        case CaptureMode.keybind:
                             continue
-                        self.previous_time = timer()
-                    case CaptureMode.keybind:
-                        foreground_pid = get_foreground_pid()
-                        print(foreground_pid in pids)
-                        continue
                 try:
                     url_info = parse_url(url)
-                except ValueError:
+                except ValueError as e:
+                    if self.keybind_registered:
+                        date_time = dt.datetime.now().replace(microsecond=0)
+                        self.info_frame.logger.log_bad(
+                            f"Error at {date_time}: {e}")
+                        self.keybind_registered = False
                     continue
                 panorama_id = url_info.panorama_id
-                if panorama_id in seen_panorama_ids:
+                # Reject URL if lat/long already registered
+                # unless invoked manually by user via keybind.
+                if (
+                    panorama_id in seen_panorama_ids
+                    and not self.keybind_registered
+                ):
                     continue
+                self.keybind_registered = False
                 seen_panorama_ids.add(panorama_id)
                 self.info_frame.logger.log_neutral(
                     f"Captured URL: {url}")
@@ -359,38 +378,75 @@ class LiveDownloading(tk.Frame):
         self.info_frame.logger.log_bad(f"Live tracking stopped at {date_time}")
     
     def _on_key_press(self, key) -> None:
-        if key != self.previous_key_press:
-            self.keys_pressed_count += 1
-            self.previous_key_press = key
-            if key in SHIFT_KEYS:
-                self.shift_states.add(key)
-            elif key in ALT_KEYS:
-                self.alt_states.add(key)
-            elif key in CONTROL_KEYS:
-                return
-            else:
-                parts = []
-                if self.shift_states:
-                    parts.append("Shift")
-                if self.alt_states:
-                    parts.append("Alt")
+        if key == self.previous_key_press:
+            # Being held down.
+            return
+        self.keys_pressed_count += 1
+        self.previous_key_press = key
+        if key in SHIFT_KEYS:
+            # One variant of the shift key was pressed.
+            self.shift_states.add(key)
+        elif key in ALT_KEYS:
+            # One variant of the alt key was pressed.
+            self.alt_states.add(key)
+        elif key in CONTROL_KEYS:
+            # One variant of the ctrl key was pressed, ignore.
+            return
+        else:
+            parts = []
+            if self.shift_states:
+                # One or more shift key active.
+                parts.append("Shift")
+            if self.alt_states:
+                # One or more alt key active.
+                parts.append("Alt")
+                print(len(parts))
+            if getattr(key, "char", None):
                 if ord(key.char) < 32:
+                    # Control character.
                     parts.append("Ctrl")
                     parts.append(CONTROL_CHARACTERS[ord(key.char)])
                 else:
+                    # Standard character.
                     parts.append(key.char)
-                self.keys_pressed.add("+".join(parts))
+            elif key not in SPECIAL_KEYS:
+                # Check for Ctrl + Alt + <key> (valid - Ctrl + <key>)
+                character = chr(getattr(key, "vk", 0))
+                if not self.alt_states or character not in CONTROL_CHARACTERS:
+                    return
+                parts.append("Ctrl")
+                parts.append(character)
+            else:
+                parts.append(KEYSYMS[SPECIAL_KEYS[key]])
+            self.keys_pressed.add("+".join(parts))
     
     def _on_key_release(self, key) -> None:
         self.keys_released_count += 1
-        if key in SHIFT_KEYS:
+        if self.keys_released_count > self.keys_pressed_count:
+            # Possibly keys already held before tracking started
+            # or another issue, rectify it by resetting the counts to equality.
+            self.keys_released_count = self.keys_pressed_count
+            return
+        if key in SHIFT_KEYS and key in self.shift_states:
+            # One of the shift keys was released.
             self.shift_states.remove(key)
-        if key in ALT_KEYS:
+        if key in ALT_KEYS and key in self.alt_states:
+            # One of the alt keys was released.
             self.alt_states.remove(key)
+        # Reset unnecessary - equal, ready for next press/release cycle.
         if self.keys_pressed_count == self.keys_released_count:
-            # Reset unnecessary - equal, ready for next press/release cycle.
-            if self._is_keybind():
-                print(self.keys_pressed)
+            if (
+                # Keybind matches.
+                self._is_keybind()
+                # And the capture mode is set to keybind.
+                and self.settings_frame.settings.capture_mode
+                    == CaptureMode.keybind
+                # And the selenium tracked window is in the foreground.
+                and get_foreground_pid() in {
+                    child.pid for child in
+                    psutil.Process(self.window.service.process.pid).children()}
+            ):                
+                self.keybind_registered = True
             # Do reset pressed keys and previous pressed key, however.
             self.keys_pressed.clear()
             self.previous_key_press = None
@@ -399,9 +455,11 @@ class LiveDownloading(tk.Frame):
         # The matching keybind as per the settings has been registered.
         keybind_lists = []
         for keys in (self.keys_pressed, self.settings_frame.settings.keybind):
+            # Ensure order of keybinds and keybind components do not matter.
             keybind_list = sorted(
                 sorted(keybind.split("+")) for keybind in keys)
             keybind_lists.append(keybind_list)
+        # Input keybind matches settings keybind.
         return keybind_lists[0] == keybind_lists[1]
     
     def _handle_queue(self) -> None:
@@ -534,6 +592,7 @@ class LiveDownloading(tk.Frame):
         self.download_count = 0
         self.start_time = timer()
         self.previous_time = timer()
+        self.keybind_registered = False
         self.start_button.config(
             text="Stop", bg=RED, activebackground=RED,
             command=lambda: setattr(self, "to_stop", True))

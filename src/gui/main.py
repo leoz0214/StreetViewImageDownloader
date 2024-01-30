@@ -9,7 +9,6 @@ import rendering
 import url
 from _utils import inter, BUTTON_COLOURS
 
-
 TITLE = "Street View Image Downloader"
 
 

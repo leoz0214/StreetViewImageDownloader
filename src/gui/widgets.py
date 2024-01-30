@@ -7,6 +7,10 @@ from _utils import inter, BUTTON_COLOURS, GREEN, BLACK, RED
 from api.url import MIN_WIDTH, MAX_WIDTH, MIN_HEIGHT, MAX_HEIGHT
 
 
+# Set a huge limit for the logger lines to avoid getting infinitely long.
+MAX_LOGGER_LINES = 8192
+
+
 class UrlSettingsToplevel(tk.Toplevel):
     """Allows the user to set the URL download settings (width and height)."""
 
@@ -96,10 +100,20 @@ class Logger(tk.Frame):
     @property
     def text(self) -> str:
         return self.textbox.get("1.0", "end").removesuffix("\n")
+
+    @property
+    def line_count(self) -> int:
+        return int(self.textbox.index("end-1c").split(".")[0])
     
     def _log(self, text: str, tag: str) -> None:
         self.textbox.config(state="normal")
+        # Only keep scrolling the textbox if at the bottom.
+        scroll_to_bottom = self.textbox.yview()[1] == 1
         self.textbox.insert("end", f"{text}\n", tag)
+        while self.line_count > MAX_LOGGER_LINES:
+            self.textbox.delete("1.0", "2.0")
+        if scroll_to_bottom:
+            self.textbox.see("end")
         self.textbox.config(state="disabled")
     
     def log_good(self, text: str) -> None:
