@@ -117,7 +117,7 @@ class Logger(tk.Frame):
         self.textbox.config(state="disabled")
     
     def log_good(self, text: str) -> None:
-        """Logs a positive message."""
+        """Logs a positive message, including successes."""
         self._log(text, "good")
     
     def log_neutral(self, text: str) -> None:

@@ -14,6 +14,7 @@ import batch
 import main
 import rendering
 import save
+import widgets
 from _utils import (
     inter, RED, GREEN, BLUE, GREY, BLACK, DARK_BLUE, draw_circle,
     BUTTON_COLOURS, bool_to_state)
@@ -133,6 +134,7 @@ class PanoramaIDInput(tk.Frame):
         elif isinstance(self.master, batch.PanoramaIDToplevel):
             self.master.update_submit_button_state()
         else:
+            # Rendering frame.
             self.master.master.update_start_button_state()
 
 
@@ -143,7 +145,7 @@ class PanoramaSettingsInput(tk.Frame):
 
     def __init__(
         self,
-        master: Union[PanoramaDownload, "batch.PanoramaIDSettingsToplevel"]
+        master: Union[PanoramaDownload, "widgets.PanoramaIDSettingsToplevel"]
     ) -> None:
         super().__init__(master)
         self.zoom_label = tk.Label(self, font=inter(20), text="Zoom:")
@@ -241,12 +243,14 @@ class PanoramaRangeInput(tk.Frame):
         for line in self.lines:
             self.canvas.delete(line)
         self.lines.clear()
+        # Vertical lines.
         for x in range(self.max_x + 1):
             canvas_x = self.width * x // self.max_x + CANVAS_CIRCLE_RADIUS
             line = self.canvas.create_line(
                 canvas_x, CANVAS_CIRCLE_RADIUS,
                 canvas_x, self.total_height - CANVAS_CIRCLE_RADIUS, fill=BLACK)
             self.lines.append(line)
+        # Horizontal lines.
         for y in range(self.max_y + 1):
             canvas_y = self.height * y // self.max_y + CANVAS_CIRCLE_RADIUS
             line = self.canvas.create_line(
@@ -278,7 +282,7 @@ class PanoramaRangeInput(tk.Frame):
             max(self.circle_coordinates[0][1], self.circle_coordinates[1][1]))   
         self.selected_area = self.canvas.create_rectangle(
             *top_left, *bottom_right, fill=GREEN)
-        # Tile top left and bottom right
+        # Tile top left and bottom right.
         self.top_left = (
             (top_left[0] - CANVAS_CIRCLE_RADIUS) * self.max_x // self.width,
             (top_left[1] - CANVAS_CIRCLE_RADIUS) * self.max_y // self.height)
@@ -341,6 +345,7 @@ class PanoramaRangeInput(tk.Frame):
             rounded_coordinates[0][i] == rounded_coordinates[1][i]
             for i in range(2)
         ):
+            # Disallow circles to be on the same row or column.
             self.circle_coordinates = self.previous_circle_coordinates
         else:
             self.circle_coordinates = rounded_coordinates
@@ -393,8 +398,7 @@ class PanoramaDownloadToplevel(tk.Toplevel):
         self.settings = settings
         self.cancelled = False
         self.tiles = [
-            [None] * self.settings.width
-            for _ in range(self.settings.height)]
+            [None] * self.settings.width for _ in range(self.settings.height)]
         self.panorama = None
         self.exception = None
         self.async_loop = None
@@ -486,5 +490,6 @@ class PanoramaDownloadToplevel(tk.Toplevel):
                     == get_max_coordinates(self.settings.zoom))
             self.master.save(self.panorama, can_render)
         else:
+            # Rendering window.
             self.master.render(self.panorama)
         

@@ -1,13 +1,16 @@
 """Main module of the GUI app."""
 import tkinter as tk
 
+# IMPORTANT - runs code in __init__.py such that API becomes importable.
 import __init__
+
 import batch
 import live
 import panorama_id
 import rendering
 import url
 from _utils import inter, BUTTON_COLOURS
+
 
 TITLE = "Street View Image Downloader"
 

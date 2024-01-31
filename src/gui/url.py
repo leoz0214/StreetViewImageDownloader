@@ -9,6 +9,7 @@ import batch
 import main
 import rendering
 import save
+import widgets
 from _utils import inter, RED, GREEN, BUTTON_COLOURS, bool_to_state
 from api.url import (
     MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT,
@@ -168,6 +169,7 @@ class UrlInput(tk.Frame):
         elif isinstance(self.master, batch.UrlToplevel):
             self.master.update_submit_button_state()
         else:
+            # Rendering screen.
             self.master.master.update_start_button_state()
 
 
@@ -176,7 +178,7 @@ class DimensionInput(tk.Frame):
 
     def __init__(
         self, master: Union[
-            UrlDownload, "batch.UrlSettingsToplevel",
+            UrlDownload, "widgets.UrlSettingsToplevel",
             "rendering.RenderingInputs"],
         label: str, minimum: int, maximum: int, default: int,
         length: int = 1500, label_width: int = 8, font_size: int = 20
@@ -225,4 +227,5 @@ class DimensionInput(tk.Frame):
             return
         self._value.set(int(entry_str))
         if isinstance(self.master, rendering.RenderingInputs):
+            # Render - projection size changed.
             self.master.update_display("length", self.value)

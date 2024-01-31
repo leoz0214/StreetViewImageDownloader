@@ -85,17 +85,15 @@ class PanoramaSettings:
     
     def _set_top_left(self, top_left: tuple[int, int]) -> None:
         validate_coordinates(top_left)
-        if not _in_rectangle(
-            MIN_COORDINATES, get_max_coordinates(self.zoom), top_left
-        ):
+        max_coordinates = get_max_coordinates(self.zoom)
+        if not _in_rectangle(MIN_COORDINATES, max_coordinates, top_left):
             raise ValueError("Top-left coordinates out of bounds.")
         self._top_left = tuple(top_left)
 
     def _set_bottom_right(self, bottom_right: tuple[int, int]) -> None:
         validate_coordinates(bottom_right)
-        if not _in_rectangle(
-            MIN_COORDINATES, get_max_coordinates(self.zoom), bottom_right
-        ):
+        max_coordinates = get_max_coordinates(self.zoom)
+        if not _in_rectangle(MIN_COORDINATES, max_coordinates, bottom_right):
             raise ValueError("Bottom-right coordinates out of bounds.")
         # Top-left is always set first, then the bottom right, so ensure
         # here that the bottom right is greater than top left
@@ -141,7 +139,7 @@ class PanoramaSettings:
     
 
 def validate_panorama_id(panorama_id: str) -> None:
-    """Performs basic validation on the panorama ID."""
+    """Performs  validation on the panorama ID."""
     if not isinstance(panorama_id, str):
         raise TypeError("Panorama ID must be a string.")
     if len(panorama_id) != PANORAMA_ID_LENGTH:
@@ -157,6 +155,7 @@ async def _get_async_images_batch(
     array: list[list], batch: list[tuple], panorama_id: str,
     settings: PanoramaSettings, gui
 ) -> None:
+    # Processes a batch of tiles to download for a given panorama ID.
     min_x, min_y = settings.top_left
     async with aiohttp.ClientSession() as session:
         for y, x in batch:
@@ -166,6 +165,7 @@ async def _get_async_images_batch(
             }
             retries = MAX_RETRIES
             while True:
+                # Check cancellation from GUI (if supplied).
                 if gui is not None and gui.cancelled:
                     raise RuntimeError
                 try:
@@ -190,8 +190,7 @@ async def _get_async_images_batch(
     
 
 async def _get_async_images(
-    array: list[list], panorama_id: str, settings: PanoramaSettings,
-    gui = None
+    array: list[list], panorama_id: str, settings: PanoramaSettings, gui = None
 ) -> None:
     # Splits required tiles into batches.
     batches = _split_array(
@@ -273,6 +272,7 @@ def _binary_search_black(
     width: int, height: int, pixels: Image.Image, gui, is_y: bool
 ) -> int:
     # First entirely black row/column in image preceded by one not the case.
+    # Does not perform a complete check, only a systematic sample of pixels.
     minimum = 0
     upper = height - 1 if is_y else width - 1
     maximum = upper
@@ -289,6 +289,7 @@ def _binary_search_black(
                 pixels[v, y] > MAX_BLACK
                 for y in range(0, height, height // 100))
         if not is_black:
+            # First black row/column to the right or below.
             minimum = v + 1
         elif v == 0:
             return v
@@ -300,10 +301,13 @@ def _binary_search_black(
                 pixels[v - 1, y] > MAX_BLACK
                 for y in range(0, height, height // 100)))
         ):
+            # Previous row/column is first non-black one.
             return v - 1
         else:
+            # First black row/column to the left or above.
             maximum = v - 1
         if minimum > maximum:
+            # No black strip at bottom/right.
             return upper
 
 
@@ -312,6 +316,7 @@ def _combine_tiles(
 ) -> Image.Image:
     # Concatenates rows into single images and then
     # concatenates the rows into a single image.
+    # Merge rows of tiles.
     rows = []
     for row in tiles:
         row_image = Image.new("RGB", (TILE_WIDTH * len(row), TILE_HEIGHT))
@@ -322,6 +327,7 @@ def _combine_tiles(
             row_image.paste(
                 tile, (TILE_WIDTH * i, 0, TILE_WIDTH * (i+1), TILE_HEIGHT))
         rows.append(row_image)
+    # Merge rows to form entire image.
     width = rows[0].width
     height = TILE_HEIGHT * len(rows)
     image = Image.new("RGB", (width, height))
@@ -340,6 +346,7 @@ def _combine_tiles(
     x = _binary_search_black(width, height, pixels, gui, False)
     y = _binary_search_black(width, height, pixels, gui, True)
     if x == width - 1 and y == height - 1:
+        # No cropping required.
         return image
     crop_box = (0, 0, x + 1, y + 1)
     return image.crop(crop_box)

@@ -1,6 +1,4 @@
-"""
-Window to preview and save an image following a panorama or URL download.
-"""
+"""Window to preview and save an image following a panorama or URL download."""
 import tkinter as tk
 from tkinter import filedialog
 from tkinter import messagebox
@@ -84,7 +82,8 @@ class SaveImageFrame(tk.Frame):
     def save(self) -> None:
         """Allows the user to save the image to a file path of their choice."""
         file = filedialog.asksaveasfilename(
-            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),))
+            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),),
+            title="Save Image")
         if not file:
             return
         try:
@@ -127,6 +126,7 @@ class ImagePreviewFrame(tk.Frame):
         self.horizontal_scrollbar = None
         self.vertical_scrollbar = None
         image = master.tk_image
+        # Only include scrollbars if required.
         if image.width() >= MIN_SCROLLBAR_WIDTH:
             self.horizontal_scrollbar = tk.Scrollbar(self, orient="horizontal")
         if image.height() >= MIN_SCROLLBAR_HEIGHT:
@@ -137,6 +137,7 @@ class ImagePreviewFrame(tk.Frame):
             self.horizontal_scrollbar is not None
             and self.vertical_scrollbar is not None
         ):
+            # Both scrollbars.
             self.canvas = tk.Canvas(
                 self, width=width, height=height,
                 xscrollcommand=self.horizontal_scrollbar.set,
@@ -150,6 +151,7 @@ class ImagePreviewFrame(tk.Frame):
                 self, width=width, height=height,
                 yscrollcommand=self.vertical_scrollbar.set)
         else:
+            # No scrollbars (image small enough in both dimensions).
             self.canvas = tk.Canvas(self, width=width, height=height)
         
         self.canvas.create_image(0, 0, image=image, anchor="nw")

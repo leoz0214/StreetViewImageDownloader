@@ -1,4 +1,4 @@
-"""Private Utility functions for the API."""
+"""Private utility functions for the API."""
 import ctypes
 import pathlib
 

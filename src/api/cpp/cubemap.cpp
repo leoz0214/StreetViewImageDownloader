@@ -116,7 +116,7 @@ inline void set_pixel_colour(
 
 // Computes an entire cubemap (entirety of all 6 faces).
 void set_cubemap(
-    char* input, int input_width, int input_height, char* output, bool* cancel
+    char* input, int input_width, int input_height, char* output, volatile bool* cancel
 ) {
     int edge_length = input_width / 4;
     Faces face, face2;

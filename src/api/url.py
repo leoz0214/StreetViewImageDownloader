@@ -39,21 +39,27 @@ DEFAULT_YAW = 0
 MAX_YAW = 360
 MIN_PITCH = 1
 MAX_PITCH = 179
+
+URL_PARTS = 4
+# View parameters as seen in the URLs.
 URL_SUFFIXES = set("ayht")
+MIN_DATA_STRING_PARTS = 5
+PANORAMA_ID_PREFIX = "1s"
 
 
 @dataclass
 class StreetViewURL:
     """Relevant parsed street view URL information."""
-    latitude: float
-    longitude: float
-    # A value of the FOV as seen in the URL, between 15 and 90.
+    # A value of the FOV as seen in the URL, between 15 and 90 degrees.
     fov: float
     # Horizontal/vertical offset in degrees.
     yaw: float
     pitch: float
     # Corresponding panorama ID embedded in the URL.
     panorama_id: str
+    # Latitude/longitude coordinates.
+    latitude: float = None
+    longitude: float = None
 
 
 def validate_dimensions(width: int, height: int) -> None:
@@ -88,8 +94,9 @@ def parse_url(url: str) -> StreetViewURL:
             break
     # Ignore www. and trailing forward slashes (not relevant)
     url = url.removeprefix("www.").rstrip("/")
+    # Split URL into its separate parts. The number of parts must be correct.
     parts = url.split("/")
-    if len(parts) != 4:
+    if len(parts) != URL_PARTS:
         raise ValueError("Invalid URL.")
     if not (parts[0].startswith("google.") and parts[0] != "google."):
         raise ValueError("Invalid protocol or Google domain.")
@@ -146,19 +153,20 @@ def parse_url(url: str) -> StreetViewURL:
     for remaining_suffix in suffixes:
         if remaining_suffix != "h":
             raise ValueError(f"Missing '{remaining_suffix}' value")
+        # Yaw or 'h' argument can be missing - set to 0 if the case.
         yaw = DEFAULT_YAW
     # Finally, extract panorama ID, validate and return.
     if not parts[-1].startswith("data="):
         raise ValueError("Invalid URL.")
     data_parts = parts[-1].split("!")
-    if len(data_parts) < 5:
+    if len(data_parts) < MIN_DATA_STRING_PARTS:
         raise ValueError("Invalid data string.")
     panorama_id_part = data_parts[4]
-    if not panorama_id_part.startswith("1s"):
+    if not panorama_id_part.startswith(PANORAMA_ID_PREFIX):
         raise ValueError("Invalid data string.")
-    panorama_id = panorama_id_part.removeprefix("1s")
+    panorama_id = panorama_id_part.removeprefix(PANORAMA_ID_PREFIX)
     validate_panorama_id(panorama_id)
-    return StreetViewURL(latitude, longitude, fov, yaw, pitch, panorama_id)
+    return StreetViewURL(fov, yaw, pitch, panorama_id, latitude, longitude)
 
 
 def get_pil_image(
@@ -173,9 +181,9 @@ def get_pil_image(
     params = {
         "cb_client": "maps_sv.tactile", "output": "thumbnail",
         "panoid": url_info.panorama_id, "w": width, "h": height,
-        # Pitch (vertical) [-90, 90] where positive is downwards.
+        # Pitch (vertical) [-89, 89] where positive is downwards.
         "yaw": url_info.yaw, "pitch": -(url_info.pitch - 90),
-        "thumbfov": round(url_info.fov) # Must be integer,
+        "thumbfov": round(url_info.fov) # FOV must be integral,
     }
     retries = MAX_RETRIES
     while True:
