@@ -90,7 +90,7 @@ class LiveSettings:
     def to_json(self) -> str:
         """
         Converts the settings object to a JSON string with
-        hashing to maintain data integrity.
+        hashing to boost data integrity.
         """
         data = {
             "image_mode": {
@@ -238,7 +238,7 @@ class LiveDownloading(tk.Frame):
         # Currently stopping session.
         # Prevents creating a new one until the previous one is ended.
         self.stopping = False
-        # Start timestamp (to track time elapsed).
+        # The start timestamp (to track time elapsed).
         self.start_time = None
         # Timestamp of previous captured by fixed time intervals.
         self.previous_time = None
@@ -293,7 +293,7 @@ class LiveDownloading(tk.Frame):
         try:
             options = ChromeOptions()
             # Do not display 'Chrome is being automated' banner.
-            # In fact, it is not in the case of this program!
+            # In fact, it is not, in the case of this program!
             options.add_experimental_option(
                 "excludeSwitches",["enable-automation"])
             self.window = Chrome(options=options)
@@ -323,14 +323,18 @@ class LiveDownloading(tk.Frame):
         # as each lat/long has a unique panorama ID.
         seen_panorama_ids = set()
         try:
+            # Gets the user started by loading Google Maps.
             self.window.get(MAPS_URL)
             while not self.to_stop:
+                time.sleep(TIME_BETWEEN_CHECKS)
                 settings = self.settings_frame.settings
                 try:
                     url = self.window.current_url
                     if url is None:
+                        # Window closed by user (no URL found).
                         break
                 except Exception:
+                    # Window closed by user (exception).
                     break
                 if not self.keybind_registered:
                     match settings.capture_mode:
@@ -353,6 +357,7 @@ class LiveDownloading(tk.Frame):
                 try:
                     url_info = parse_url(url)
                 except ValueError as e:
+                    # Captured URL not as expected by the program.
                     if self.keybind_registered:
                         date_time = dt.datetime.now().replace(microsecond=0)
                         self.info_frame.logger.log_bad(
@@ -374,20 +379,19 @@ class LiveDownloading(tk.Frame):
                 self.info_frame.logger.log_neutral(
                     f"Captured URL: {url}")
                 self._add_to_queue(
-                    url,
-                    settings.download_mode == DownloadMode.on_demand)
-                time.sleep(TIME_BETWEEN_CHECKS)
+                    url, settings.download_mode == DownloadMode.on_demand)
         except Exception as e:
             date_time = dt.datetime.now().replace(microsecond=0)
             self.info_frame.logger.log_bad(f"Fatal error at {date_time}: {e}")
-        keyboard_listener.stop()
+        with suppress(Exception):
+            keyboard_listener.stop()
         self.stop()
         date_time = dt.datetime.now().replace(microsecond=0)
         self.info_frame.logger.log_bad(f"Live tracking stopped at {date_time}")
     
     def _on_key_press(self, key) -> None:
         if key == self.previous_key_press:
-            # Being held down.
+            # Being held down, ignore.
             return
         self.keys_pressed_count += 1
         self.previous_key_press = key
@@ -408,7 +412,6 @@ class LiveDownloading(tk.Frame):
             if self.alt_states:
                 # One or more alt key active.
                 parts.append("Alt")
-                print(len(parts))
             if getattr(key, "char", None):
                 if ord(key.char) < 32:
                     # Control character.
@@ -494,6 +497,8 @@ class LiveDownloading(tk.Frame):
                     url, settings.url_width, settings.url_height,
                     self.download_id)
             self.info_frame.logger.log_neutral(f"Downloading URL: {url}")
+            # Starts image download in thread, waiting for completion,
+            # an error, or cancellation.
             threading.Thread(target=target, daemon=True).start()
             while (
                 self.image is None and self.exception is None
@@ -505,6 +510,7 @@ class LiveDownloading(tk.Frame):
             # Refresh settings after processing.
             settings = self.settings_frame.settings
             if self.exception is not None:
+                # Error.
                 date_time = dt.datetime.now().replace(microsecond=0)
                 self.info_frame.logger.log_bad(
                     f"Error at {date_time}: {self.exception}")
@@ -512,6 +518,7 @@ class LiveDownloading(tk.Frame):
                     self.to_stop = True
                 self.exception = None
             if self.image is not None:
+                # Proceed to saving.
                 self._save_image(
                     settings, url_info.latitude, url_info.longitude,
                     url_info.panorama_id)
@@ -547,6 +554,7 @@ class LiveDownloading(tk.Frame):
         self, settings: LiveSettings,
         latitude: float, longitude: float, panorama_id: str
     ) -> None:
+        # Saves the current output image given the mode and save folder.
         folder = settings.save_folder
         match settings.save_mode:
             case SaveMode.smallest_integer:
@@ -565,6 +573,7 @@ class LiveDownloading(tk.Frame):
             case SaveMode.panorama_id:
                 save_path = folder / f"{panorama_id}.jpg"
         if save_path.exists():
+            # Uses the smallest file path (n).jpg filename format available.
             n = 1
             stem = save_path.stem
             while (save_path := folder / f"{stem} ({n}).jpg").exists():
@@ -582,10 +591,10 @@ class LiveDownloading(tk.Frame):
         except Exception as e:
             if self.to_stop:
                 return
-            self.info_frame.logger.log_bad(
-                f"Error while saving at {date_time}: {e}")
             if settings.stop_upon_error:
                 self.to_stop = True
+            self.info_frame.logger.log_bad(
+                f"Error while saving at {date_time}: {e}")
 
     def _add_to_queue(self, url: str, on_demand: bool) -> None:
         # Adds a URL to the queue to be downloaded.
@@ -606,7 +615,7 @@ class LiveDownloading(tk.Frame):
         """
         Upon changing the download mode setting to on demand,
         limit the queue length to 1 and retaining the most recently
-        captured URL."
+        captured URL.
         """
         if self.download_queue.qsize() <= 1:
             return
@@ -619,6 +628,7 @@ class LiveDownloading(tk.Frame):
         
     def start(self) -> None:
         """Opens the selenium window and starts the tracking."""
+        # Prevent starting until the previous window has fully closed.
         while self.stopping:
             time.sleep(TIME_BETWEEN_CHECKS)
         self.stopped = False
@@ -703,16 +713,17 @@ class LiveSettingsFrame(tk.Frame):
     def settings(self) -> LiveSettings:
         # Returns entire settings object based on current GUI inputs.
         return LiveSettings(
+            # Image settings
             self.image_mode_frame.image_mode,
             self.image_mode_frame.panorama_settings,
             self.image_mode_frame.width, self.image_mode_frame.height,
-
+            # Capture settings.
             self.capture_mode_frame.capture_mode,
             self.capture_mode_frame.fixed_time_interval,
             self.capture_mode_frame.keybind,
-
+            # Save settings
             self.save_mode_frame.save_mode, self.save_mode_frame.save_folder,
-
+            # Download settings
             self.download_mode_frame.download_mode,
             self.stop_upon_error_checkbutton.stop_upon_error)
 
@@ -873,8 +884,6 @@ class LiveCaptureMode(tk.Frame):
         self.update_info_label()
         self.edit_button.config(
             state=bool_to_state(self.capture_mode != CaptureMode.new_lat_long))
-        if self.capture_mode == CaptureMode.fixed_time_intervals:
-            self.master.master.master.reset_timer()
 
     def update_info_label(self) -> None:
         """Updates the information label when settings are changed."""
@@ -928,7 +937,8 @@ class FixedTimeIntervalToplevel(tk.Toplevel):
         self.info_label = tk.Label(
             self, font=inter(12),
             text=("Consider how often you would like to capture URLs.\n"
-                "Note that the same URL will only be downloaded once."))
+                "Note that only one URL will be "
+                "downloaded per latitude/longitude."))
 
         self.title_label.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
         self.info_label.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
@@ -1016,12 +1026,14 @@ class KeybindToplevel(tk.Toplevel):
 
     def _get_key(self, event: tk.Event) -> str | None:
         if event.keysym in KEYSYMS:
+            # Special key.
             keysym = KEYSYMS[event.keysym]
         elif len(event.keysym) > 1:
             # Not a character key nor a supported control key.
             return None
         else:
             keysym = event.keysym
+        # Applies any active states: Ctrl/Shift/Alt.
         parts = [
             name for state, name in STATE_NAMES.items()
                 if event.state & STATE_MASKS[state]] + [keysym]
@@ -1046,14 +1058,18 @@ class KeybindToplevel(tk.Toplevel):
             final_keys_pressed = []
             for key in self.keys_pressed:
                 if "++" in key:
+                    # Disallow + as a keybind (unnecessary, looks silly).
                     break
                 parts = key.split("+")
                 if "Ctrl" in parts:
+                    # Ctrl + letter should be case-insensitiv.
                     parts[-1] = parts[-1].upper()
                     if parts[-1] not in CONTROL_CHARACTERS:
+                        # Ctrl + character not valid.
                         break
                 final_keys_pressed.append("+".join(parts))
             else:
+                # All keys valid - set keybind.
                 self.keybind = tuple(sorted(final_keys_pressed))
                 self.keybind_label.config(
                     text=f"Current keybind: {' '.join(self.keybind)}")
@@ -1125,6 +1141,7 @@ class LiveSaveMode(tk.Frame):
         """Updates options depending on image mode."""
         with suppress(AttributeError):
             self.save_mode_option_menu.destroy()
+        # Allow extra save option if in panorama mode: Panorama ID.
         if is_panorama_mode:
             options = PANORAMA_ID_SAVE_MODE_OPTIONS
         else:
@@ -1220,7 +1237,10 @@ class LiveInfoFrame(tk.Frame):
             TIME_BETWEEN_INFO_REFRESH_MS, self.update_info)
     
     def update_info(self) -> None:
-        """Updates the info label and window title based on download state."""
+        """
+        Updates the info label and window title based on download state.
+        Repeats at regular intervals.
+        """
         title = f"{main.TITLE} - Live Downloading"
         with suppress(Exception):
             if self.master.master.window is None:
@@ -1248,6 +1268,7 @@ class LiveInfoFrame(tk.Frame):
                             f"{time_until_next_capture}")
                 title = f"{title} - {text}"
             self.info_label.config(text=text)
+            # Provide live info in the title of the window too.
             self.master.master.root.title(title)
             self.info_label.after(
                 TIME_BETWEEN_INFO_REFRESH_MS, self.update_info)

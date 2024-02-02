@@ -1,7 +1,7 @@
 """
 Panorama rendering feature - the user inputs a panorama ID or URL.
 Then, the panorama is downloaded and then the user can adjust
-pitch, yaw and FOV, and subsequently save the cube image.
+pitch, yaw and FOV, and subsequently save the square projected image.
 """
 import array
 import ctypes
@@ -15,27 +15,35 @@ from PIL import Image, ImageTk
 import main
 import panorama_id
 import url
-from _utils import inter, BUTTON_COLOURS, GREEN, bool_to_state, int_if_possible
+from _utils import (
+    inter, BUTTON_COLOURS, GREEN, bool_to_state, int_if_possible,
+    load_cpp_conversion_library)
 from api.panorama import PanoramaSettings
 from api.url import (
     parse_url, MIN_YAW, MAX_YAW, MIN_PITCH, MAX_PITCH, MIN_FOV, MAX_FOV)
-from api._utils import _load_cpp_conversion_library, _in_rectangle
+from api._utils import _in_rectangle
 
 
+DEFAULT_INPUT_MODE = 0
+DEFAULT_ZOOM = 4
 # Projection dimensions (balance between performance and resolution).
+# Sensible upper and lower bounds in use.
 MIN_LENGTH = 64
 MAX_LENGTH = 625
 DEFAULT_LENGTH = 512 
 # C++ functions
-conversion = _load_cpp_conversion_library()
+conversion = load_cpp_conversion_library()
 set_cubemap = conversion.set_cubemap
 project = conversion.project
 
+# Initial yaw, pitch and FOV values.
 DEFAULT_YAW = 0
 DEFAULT_PITCH = 90
 DEFAULT_FOV = 90
 MAX_FLOAT_INPUT_LENGTH = 10
+# Absolute FOV change upon scrolling to zoom in or out.
 SCROLL_FOV_CHANGE = 10
+# Ensures mouse sensitivity is reasonable.
 YAW_MULTIPLIER_CONSTANT = 1.4
 PITCH_MULTIPLIER_CONSTANT = 1.4
 
@@ -68,8 +76,8 @@ class PanoramaRendering(tk.Frame):
 
     def update_start_button_state(self) -> None:
         """Updates the state of the start button depending on input."""
-        self.start_button.config(
-            state=bool_to_state(self.panorama_input.valid))
+        is_valid = self.panorama_input.valid
+        self.start_button.config(state=bool_to_state(is_valid))
     
     def back(self) -> None:
         """Returns back to the main menu."""
@@ -78,11 +86,11 @@ class PanoramaRendering(tk.Frame):
     
     def start(self) -> None:
         """Starts the download and subsequent rendering."""
-        _panorama_id = self.panorama_input.panorama_id
+        panorama_id_ = self.panorama_input.panorama_id
         zoom = self.zoom_input.zoom
         panorama_settings = PanoramaSettings(zoom=zoom)
         panorama_id.PanoramaDownloadToplevel(
-            self,  _panorama_id, panorama_settings)
+            self,  panorama_id_, panorama_settings)
     
     def render(self, panorama: Image.Image) -> None:
         """Prepares to render the panorama."""
@@ -98,7 +106,7 @@ class PanoramaInput(tk.Frame):
     def __init__(self, master: PanoramaRendering) -> None:
         super().__init__(master, width=1800, height=200)
         self.pack_propagate(False)
-        self._input_mode = tk.IntVar(value=0)
+        self._input_mode = tk.IntVar(value=DEFAULT_INPUT_MODE)
         self._input_mode.trace_add("write", lambda *_: self.update_input())
         # Frame to compartmentalise the radiobuttons even when the input
         # frame is stretched a lot by the URL input.
@@ -151,7 +159,7 @@ class PanoramaRenderingZoomInput(tk.Frame):
 
     def __init__(self, master: PanoramaRendering) -> None:
         super().__init__(master)
-        self._zoom = tk.IntVar(value=4)
+        self._zoom = tk.IntVar(value=DEFAULT_ZOOM)
         self.label = tk.Label(self, font=inter(20), text="Zoom:")
         self.label.grid(row=0, column=0, padx=5, pady=5)
         for value in range(4, 6):
@@ -205,6 +213,9 @@ class PanoramaRenderingScreen(tk.Frame):
     def destroy(self) -> None:
         """Exists rendering screen."""
         if self.rendering_frame.tk_image is None:
+            # Set the C-bool variable to True, such that the C++
+            # code receives the signal to cancel further cubemap
+            # processing, returning early.
             self.rendering_frame.cancel.value = True
         super().destroy()
     
@@ -218,7 +229,8 @@ class PanoramaRenderingScreen(tk.Frame):
     def save(self) -> None:
         """Save the image in the current pitch, yaw and FOV."""
         file = filedialog.asksaveasfilename(
-            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),))
+            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),),
+            title="Save Image")
         if not file:
             return
         try:
@@ -236,7 +248,7 @@ class PanoramaRenderingScreen(tk.Frame):
 class PanoramaRenderingFrame(tk.Frame):
     """
     Final frame where the panorama rendering occurs.
-    This handles all the low level functionality too,
+    This handles all the low-level functionality too,
     such as maintaining C-arrays of pixels and RGB values, and calling
     the C++ functions.
     """
@@ -257,7 +269,7 @@ class PanoramaRenderingFrame(tk.Frame):
         self.image_label = tk.Label(
             self, text="Generating Cubemap...", font=inter(25))
         self.image_label.pack(padx=10, pady=5)
-
+        # Use thread to avoid freezing the GUI whilst rendering cubemap.
         threading.Thread(target=self._set_up_rendering, daemon=True).start()
     
     @property
@@ -265,12 +277,13 @@ class PanoramaRenderingFrame(tk.Frame):
         return MAX_LENGTH // 2 - self.length // 2
 
     def _set_up_rendering(self) -> None:
+        # Panorama bytes (input).
         image_bytes = array.array("b", self.image.tobytes())
         self.c_image_bytes = (
             ctypes.c_byte * len(image_bytes)).from_buffer(image_bytes)
         self.image_pointer = ctypes.c_char_p(
             ctypes.addressof(self.c_image_bytes))
-
+        # Cubemap bytes (to be used in rendering.)
         cubemap_bytes = array.array(
             "b", bytes((0, 0, 0)) * (self.image.width // 4) ** 2 * 6)
         self.c_cubemap_bytes = (
@@ -278,13 +291,14 @@ class PanoramaRenderingFrame(tk.Frame):
         self.cubemap_pointer = ctypes.c_char_p(
             ctypes.addressof(self.c_cubemap_bytes))
         cancel_pointer = ctypes.POINTER(ctypes.c_bool)(self.cancel)
+        # Generates the cubemap, writing the data to the cubemap buffer.
         set_cubemap(
             self.image_pointer, self.image.width,
             self.image.height, self.cubemap_pointer, cancel_pointer)
         if self.cancel:
             return
 
-        self.display(True)
+        self.display(new_size=True)
         self.rendering_inputs = RenderingInputs(self)
         self.rendering_inputs.pack(padx=10, pady=5)
         self.master.save_button.config(state="normal")
@@ -306,9 +320,11 @@ class PanoramaRenderingFrame(tk.Frame):
             ).from_buffer(self.projection_bytes)
             self.projection_pointer = ctypes.c_char_p(
                 ctypes.addressof(self.c_projection_bytes))
+        # Projects the image.
         project(
-            self.projection_pointer, self.length, self.length, ctypes.c_double(self.yaw),
-            ctypes.c_double(self.pitch), ctypes.c_double(self.fov),
+            self.projection_pointer, self.length, self.length,
+            ctypes.c_double(self.yaw), ctypes.c_double(self.pitch),
+            ctypes.c_double(self.fov),
             self.cubemap_pointer, self.image.width // 4)
         self.pil_image = Image.frombytes(
             "RGB", (self.length, self.length), self.c_projection_bytes)
@@ -318,20 +334,28 @@ class PanoramaRenderingFrame(tk.Frame):
     
     def scroll(self, event: tk.Event) -> None:
         """Scrolls the mouse to zoom in and out (change FOV)."""
+        # When projection surface size is smaller than the maximum,
+        # it will be centralised inside the maximum square.
+        # Compute relative coordinates as a result and work from there.
         x = event.x - self.offset
         y = event.y - self.offset
         if not _in_rectangle((0, 0), (self.length, self.length), (x, y)):
             return
         previous_fov = self.fov
         if event.delta > 0:
-            # Zoom in
+            # Zoom in, decrease FOV, up to the minimum.
             self.fov = max(self.fov - SCROLL_FOV_CHANGE, MIN_FOV)
         else:
-            # Zoom out
+            # Zoom out, increase FOV, up to the maximum.
             self.fov = min(self.fov + SCROLL_FOV_CHANGE, MAX_FOV)
         x_from_centre = x - self.length // 2
         y_from_centre = y - self.length // 2 
         fov_change = self.fov - previous_fov
+        # When scrolling occurs from position other than the centre,
+        # also adjust yaw and pitch in a given direction (more natural).
+        # fov change < 0 => zoom in => yaw/pitch change left/right or up/down
+        # depending on mouse position relative to the centre.
+        # fov change > 0 => zoom out => opposite yaw/pitch change.
         yaw_increase = -(fov_change / 2) * (x_from_centre / (self.length // 2))
         pitch_increase = (fov_change / 2) * (y_from_centre / (self.length // 2))
         self.adjust_yaw_and_pitch(yaw_increase, pitch_increase)
@@ -339,6 +363,7 @@ class PanoramaRenderingFrame(tk.Frame):
     def drag(self, event: tk.Event) -> None:
         """Allows the panorama to be dragged to alter the yaw and pitch."""
         if self.previous_drag_coordinates is None:
+            # Initial. Again adjust coordinates given offset.
             image_coordinates = (event.x - self.offset, event.y - self.offset)
             if not _in_rectangle(
                 (0, 0), (self.length, self.length), image_coordinates
@@ -346,6 +371,7 @@ class PanoramaRenderingFrame(tk.Frame):
                 return
             self.previous_drag_coordinates = (event.x, event.y)
             return
+        # The fast the change in x or y, the faster the camera movement.
         x_change = event.x - self.previous_drag_coordinates[0]
         y_change = event.y - self.previous_drag_coordinates[1]
         yaw_increase = (
@@ -408,12 +434,9 @@ class RenderingInputs(tk.Frame):
     
     def synchronise(self) -> None:
         """Synchronises values with current live values."""
-        yaw = int_if_possible(self.master.yaw)
-        pitch = int_if_possible(self.master.pitch)
-        fov = int_if_possible(self.master.fov)
-        self.yaw_input.value = yaw
-        self.pitch_input.value = pitch
-        self.fov_input.value = fov
+        self.yaw_input.value = int_if_possible(self.master.yaw)
+        self.pitch_input.value = int_if_possible(self.master.pitch)
+        self.fov_input.value = int_if_possible(self.master.fov)
 
 
 class RenderingInput(tk.Entry):
@@ -449,6 +472,7 @@ class RenderingInput(tk.Entry):
         reverting if not a valid decimal number (all digits, max one period).
         """
         if self.setting:
+            # Don't bother validating if setting from program - it is valid.
             return
         value = self.variable.get()
         if value in ("", "."):

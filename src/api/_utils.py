@@ -1,9 +1,4 @@
 """Private utility functions for the API."""
-import ctypes
-import pathlib
-
-
-CPP_CONVERSION_LIBRARY = pathlib.Path(__file__).parent / "cpp/conversion.so"
 
 
 def _split_array(array: list, parts: int) -> list[list]:
@@ -19,11 +14,6 @@ def _split_array(array: list, parts: int) -> list[list]:
             modulus -= 1
         part += 1
     return new
-
-
-def _load_cpp_conversion_library() -> ctypes.CDLL:
-    # Loads C++ image conversion library.
-    return ctypes.CDLL(str(CPP_CONVERSION_LIBRARY))
 
 
 def _in_rectangle(

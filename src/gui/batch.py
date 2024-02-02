@@ -86,7 +86,7 @@ class BatchDownload(tk.Frame):
             to_hide = self.panorama_id_frame
         self.to_display.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
         to_hide.grid_forget()
-        # Set focus on root window (to unfocus from the treeview).
+        # Set focus on root window (to unfocus on the treeview).
         # This avoids issues such as arrow keys opening edit windows.
         self.root.focus()
     
@@ -142,41 +142,63 @@ class BatchDownloadMode(tk.Frame):
         return (DownloadMode.panorama_id, DownloadMode.url)[value]
 
 
-class BatchPanoramaIDDownload(tk.Frame):
-    """Frame to input panorama IDs to download and save paths."""
+class BatchDownloadMaster(tk.Frame):
+    """Common frame for panorama ID/URL input and settings frames."""
 
-    def __init__(self, master: BatchDownload) -> None:
+    def __init__(
+        self, master: BatchDownload, headings: tuple[str],
+        input_toplevel: tk.Toplevel, settings_toplevel: tk.Toplevel
+    ) -> None:
         super().__init__(master)
-        self.table = Table(self, PANORAMA_ID_HEADINGS, (500, 500), self.edit)
-        self.settings = PanoramaSettings()
+        self.table = Table(self, headings, (500, 500), self.edit)
         self.info_label = tk.Label(self, font=inter(12))
         self.update_info_label()
         self.buttons = DownloadInputButtons(self)
+        self.input_toplevel = input_toplevel
+        self.settings_toplevel = settings_toplevel
 
         self.table.pack(padx=10, pady=5)
         self.info_label.pack(padx=10, pady=5)
         self.buttons.pack(padx=10, pady=5)
     
     def add(self) -> None:
-        """Allows the user to add a panorama ID, file save path pair."""
+        """Allows the user to add a X, file save path pair."""
         if len(self.table.records) == MAX_BATCH_SIZE:
             messagebox.showerror(
                 "Error", f"Maximum batch size of {MAX_BATCH_SIZE} reached.")
             return
-        PanoramaIDToplevel(self)
+        self.input_toplevel(self)
     
     def edit(self) -> None:
         """Updates the currently selected record."""
         if any(
-            isinstance(widget, PanoramaIDToplevel) 
+            isinstance(widget, self.input_toplevel) 
             for widget in self.children.values()
         ):
-            # Only one instance of the panorama toplevel at a time.
+            # Only one instance of the input toplevel at a time.
             return
         with suppress(IndexError):
             index = self.table.selected
             record = self.table.records[index]
-            PanoramaIDToplevel(self, index, *record)
+            self.input_toplevel(self, index, *record)
+    
+    def update_info_label(self) -> None:
+        """Updates info label including number of records and settings."""
+        raise NotImplementedError
+    
+    def edit_settings(self) -> None:
+        """Allows the download settings to be edited."""
+        self.settings_toplevel(self, self.master.root)
+
+
+class BatchPanoramaIDDownload(BatchDownloadMaster):
+    """Frame to input panorama IDs to download and save paths."""
+
+    def __init__(self, master: BatchDownload) -> None:
+        self.settings = PanoramaSettings()
+        super().__init__(
+            master, PANORAMA_ID_HEADINGS, PanoramaIDToplevel,
+            widgets.PanoramaIDSettingsToplevel)
     
     def update_info_label(self) -> None:
         """Updates info label including number of records and settings."""
@@ -195,10 +217,6 @@ class BatchPanoramaIDDownload(tk.Frame):
                 f"Height: {self.settings.height}",
                 f"Tiles: {self.settings.tiles}"))
         self.info_label.config(text=text)
-    
-    def edit_settings(self) -> None:
-        """Allows the panorama download settings to be edited."""
-        widgets.PanoramaIDSettingsToplevel(self, self.master.root)
 
 
 class DownloadInputButtons(tk.Frame):
@@ -226,12 +244,14 @@ class DownloadInputButtons(tk.Frame):
         """Imports a CSV file as input (first two columns only)."""
         try:
             file_path = filedialog.askopenfilename(
-                defaultextension=".csv", filetypes=(("CSV", ".csv"),))
+                defaultextension=".csv", filetypes=(("CSV", ".csv"),),
+                title="Import CSV")
             if not file_path:
                 return
             records = []
             seen_file_paths = set()
             with open(file_path, "r", encoding="utf8") as f:
+                # Attempt to detect delimiter out of a common bunch.
                 dialect = csv.Sniffer().sniff(f.read(1024), delimiters=";,| ")
                 f.seek(0)
                 reader = csv.reader(f, dialect)
@@ -241,6 +261,7 @@ class DownloadInputButtons(tk.Frame):
                         if isinstance(self.master, BatchPanoramaIDDownload):
                             validate_panorama_id(value)
                         else:
+                            # URL import.
                             parse_url(value)
                         if file_path.lower() in seen_file_paths:
                             raise RuntimeError(
@@ -287,7 +308,8 @@ class DownloadInputButtons(tk.Frame):
     def export_csv(self) -> None:
         """Exports a CSV file based on the current input."""
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".csv", filetypes=(("CSV", ".csv"),))
+            defaultextension=".csv", filetypes=(("CSV", ".csv"),),
+            title="Export CSV")
         if not file_path:
             return
         with open(file_path, "w", encoding="utf8") as f:
@@ -317,46 +339,68 @@ class Table(tk.Frame):
         self.select_command = select_command
 
         self.canvas = tk.Canvas(self, width=sum(min_widths), height=490)
-        self.horizontal_scrollbar = tk.Scrollbar(
-            self, orient="horizontal", command=self.canvas.xview)
-        self.vertical_scrollbar = tk.Scrollbar(
-            self, orient="vertical", command=self.canvas.yview)
         style = ttk.Style()
         style.configure("Treeview.Heading", font=inter(15))
         style.configure("Treeview", font=TABLE_FONT, rowheight=30)
 
+        self.horizontal_scrollbar = tk.Scrollbar(
+            self, orient="horizontal", command=self.canvas.xview)
+        self.vertical_scrollbar = tk.Scrollbar(
+            self, orient="vertical", command=self.canvas.yview)
+
         self.treeview = None
         self.treeview_window = None
         self.create_treeview()
-    
-        self.canvas.config(
-            xscrollcommand=self.horizontal_scrollbar.set,
-            yscrollcommand=self.vertical_scrollbar.set)
 
         self.canvas.grid(row=0, column=0)
-        self.horizontal_scrollbar.grid(row=1, column=0, sticky="we")
-        self.vertical_scrollbar.grid(row=0, column=1, sticky="ns")
     
     @property
     def selected(self) -> int:
         return self.treeview.index(self.treeview.selection()[0])
     
-    def create_treeview(self) -> None:
+    def create_treeview(self, records: list = None) -> None:
         """Sets up the treeview widget."""
         if self.treeview_window is not None:
             self.canvas.delete(self.treeview_window)
         self.treeview = ttk.Treeview(
             self.canvas, columns=self.headings, show="headings",
-            height=max(len(self.text_widths), MIN_TABLE_HEIGHT))
-        for heading, min_width in zip(self.headings, self.get_column_widths()):
+            height=max(len(self.records), MIN_TABLE_HEIGHT))
+        for heading, width in zip(self.headings, self.get_column_widths()):
             self.treeview.heading(heading, text=heading)
-            self.treeview.column(heading, width=min_width)
+            self.treeview.column(heading, width=width)
         if self.select_command is not None:
             self.treeview.bind(
                 "<<TreeviewSelect>>", lambda *_: self.select_command())
+        if records is not None:
+            for record in records:
+                self.treeview.insert("", "end", values=record)
 
         self.treeview_window = self.canvas.create_window(
             0, 0, anchor="nw", window=self.treeview)
+        self.update_scrollbars()
+    
+    def update_scrollbars(self) -> None:
+        """
+        Displays or hides the horizontal and vertical scrollbars
+        depending on their need.
+        """
+        height = self.treeview.cget("height")
+        vertical = height > MIN_TABLE_HEIGHT
+        horizontal = any(
+            self.treeview.column(heading, "width") > min_width
+            for heading, min_width in zip(self.headings, self.min_widths))
+        if vertical:
+            self.canvas.config(yscrollcommand=self.vertical_scrollbar.set)
+            self.vertical_scrollbar.grid(row=0, column=1, sticky="ns")
+        else:
+            self.canvas.config(yscrollcommand=None)
+            self.vertical_scrollbar.grid_forget()
+        if horizontal:
+            self.canvas.config(xscrollcommand=self.horizontal_scrollbar.set)
+            self.horizontal_scrollbar.grid(row=1, column=0, sticky="we")
+        else:
+            self.canvas.config(xscrollcommand=None)
+            self.horizontal_scrollbar.grid_forget()
         self.master.master.root.update()
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
     
@@ -369,10 +413,11 @@ class Table(tk.Frame):
         new_column_widths = self.get_column_widths()
         if previous_column_widths == new_column_widths:
             self.treeview.insert("", "end", values=record)
+            self.treeview.config(
+                height=max(len(self.records), MIN_TABLE_HEIGHT))
+            self.update_scrollbars()
             return
-        self.create_treeview()
-        for record in self.records:
-            self.treeview.insert("", "end", values=record)
+        self.create_treeview(self.records)
         
     def edit(self, index: int, record: tuple) -> None:
         """Updates a given record."""
@@ -384,10 +429,9 @@ class Table(tk.Frame):
         if previous_column_widths == new_column_widths:
             self.treeview.delete(self.treeview.get_children()[index])
             self.treeview.insert("", index, values=record)
+            self.update_scrollbars()
             return
-        self.create_treeview()
-        for record in self.records:
-            self.treeview.insert("", "end", values=record)
+        self.create_treeview(self.records)
     
     def pop(self, index: int) -> None:
         """Deletes the record at the given index."""
@@ -397,22 +441,19 @@ class Table(tk.Frame):
         new_column_widths = self.get_column_widths()
         if previous_column_widths == new_column_widths:
             self.treeview.delete(self.treeview.get_children()[index])
+            self.treeview.config(
+                height=max(len(self.records), MIN_TABLE_HEIGHT))
+            self.update_scrollbars()
             return
-        self.create_treeview()
-        for record in self.records:
-            self.treeview.insert("", "end", values=record)
+        self.create_treeview(self.records)
 
     def get_column_widths(self) -> list[int]:
         """Return required width for each column."""
-        widths = []
-        for i, min_width in enumerate(self.min_widths):
-            if not self.text_widths:
-                widths.append(min_width)
-                continue
-            width = max(
-                min_width, max(width[i] for width in self.text_widths))
-            widths.append(width)
-        return widths
+        if not self.text_widths:
+            return list(self.min_widths)
+        return [
+            max(min_width, max(width[i] for width in self.text_widths))
+            for i, min_width in enumerate(self.min_widths)]
 
 
 class InputToplevel(tk.Toplevel):
@@ -538,56 +579,29 @@ class FileInput(tk.Frame):
     def select(self) -> None:
         """Selects a file using the file dialog."""
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),))
+            defaultextension=".jpg", filetypes=(("JPG", ".jpg"),),
+            title="Select File")
         if not file_path:
             return
         self._file_path.set(file_path)
         self.master.update_submit_button_state()
 
 
-class BatchUrlDownload(tk.Frame):
+class BatchUrlDownload(BatchDownloadMaster):
     """Allows Google Street View URLs to be downloaded en masse."""
 
     def __init__(self, master: BatchDownload) -> None:
-        super().__init__(master)
         self.width = DEFAULT_WIDTH
         self.height = DEFAULT_HEIGHT
-        self.table = Table(self, URL_HEADINGS, (500, 500), self.edit)
-        self.info_label = tk.Label(self, font=inter(12))
-        self.update_info_label()
-        self.buttons = DownloadInputButtons(self)
+        super().__init__(
+            master, URL_HEADINGS, UrlToplevel, widgets.UrlSettingsToplevel)
 
-        self.table.pack(padx=10, pady=5)
-        self.info_label.pack(padx=10, pady=5)
-        self.buttons.pack(padx=10, pady=5)
-    
     def update_info_label(self) -> None:
         """Updates information, including URL count, width and height."""
         text = " | ".join((
             f"Count: {len(self.table.records)}",
             f"Dimension: {self.width} x {self.height}"))
         self.info_label.config(text=text)
-    
-    def add(self) -> None:
-        """Allows a URL/file path pair to be input."""
-        UrlToplevel(self)
-    
-    def edit(self) -> None:
-        """Allows a URL/file path pair to be edited."""
-        if any(
-            isinstance(widget, UrlToplevel)
-            for widget in self.children.values()
-        ):
-            # Only one instance open at a time.
-            return
-        with suppress(IndexError):
-            index = self.table.selected
-            record = self.table.records[index]
-            UrlToplevel(self, index, *record)
-    
-    def edit_settings(self) -> None:
-        """Allows the user to adjust the URL download settings."""
-        widgets.UrlSettingsToplevel(self, self.master.root)
 
 
 class UrlToplevel(InputToplevel):
