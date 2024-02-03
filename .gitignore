@@ -1,5 +1,4 @@
 **/__pycache__
 testing/test_outputs/
 *.so
-docs/index.rst
 docs/_*
