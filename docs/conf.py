@@ -52,4 +52,5 @@ def skip_unless_included(app, what, name, obj, skip, options) -> bool:
 
 
 def setup(sphinx) -> None:
+   import build
    sphinx.connect("autoapi-skip-member", skip_unless_included)

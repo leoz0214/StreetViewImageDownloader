@@ -13,12 +13,13 @@ if TEMP_FOLDER.is_dir():
 TEMP_FOLDER.mkdir()
 
 # Copy all modules into a temporary folder except the __init__.py
-# file, since api.panorama.x is not wanted (panorama.x is wanted instead).
+# file, e.g. since api.panorama.x is not wanted (panorama.x is wanted instead).
 API_FOLDER = FOLDER.parent / "src" / "api"
 for path in API_FOLDER.iterdir():
     if path.suffix == ".py" and path.stem != "__init__":
         shutil.copy(path, TEMP_FOLDER / path.name)
 
 
-subprocess.run(("sphinx-build", "-b", "html", str(FOLDER), str(BUILD_FOLDER)))
-shutil.rmtree(TEMP_FOLDER)
+if __name__ == "__main__":
+    subprocess.run(("sphinx-build", "-b", "html", str(FOLDER), str(BUILD_FOLDER)))
+    shutil.rmtree(TEMP_FOLDER)
