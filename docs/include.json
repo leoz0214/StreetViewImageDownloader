@@ -1,0 +1,46 @@
+{
+    "panorama": {
+        "get_max_coordinates": "",
+        "PanoramaSettings": [
+            "update",
+            "zoom",
+            "width",
+            "height",
+            "top_left",
+            "bottom_right",
+            "tiles"
+        ],
+        "validate_panorama_id": "",
+        "get_tiles": "",
+        "get_pil_tiles": "",
+        "get_panorama": "",
+        "get_pil_panorama": "",
+        "MIN_ZOOM": "",
+        "MAX_ZOOM": "",
+        "PANORAMA_ID_LENGTH": ""
+    },
+    "url": {
+        "StreetViewURL": [
+            "fov",
+            "yaw",
+            "pitch",
+            "panorama_id",
+            "latitude",
+            "longitude"
+        ],
+        "parse_url": "",
+        "get_image": "",
+        "get_pil_image": "",
+        "MIN_LATITUDE": "",
+        "MAX_LATITUDE": "",
+        "MIN_LONGITUDE": "",
+        "MAX_LONGITUDE": "",
+        "MIN_YAW": "",
+        "MAX_YAW": "",
+        "MIN_PITCH": "",
+        "MAX_PITCH": "",
+        "MIN_FOV": "",
+        "MAX_FOV": "",
+        "PANORAMA_ID_PREFIX": ""
+    }
+}

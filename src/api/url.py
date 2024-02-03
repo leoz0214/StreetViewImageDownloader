@@ -1,10 +1,26 @@
 """
 This module allows the user to input a valid Google Street View
-URL (the full one, not a shorthand), set an image size, and
-the code downloads the relevant file using a hidden thumbnail API
+URL, set an image size (width and height), and the code
+downloads the relevant file using a hidden thumbnail API
 replicating the angle and zoom of the image represented
-by the URL, which would be roughly seen on the web app.
-This includes handling pitch, yaw and zoom correctly.
+by the URL, which would be roughly seen on the Street View web app.
+
+Here is an example of a valid Street View URL.
+https://www.google.co.uk/maps/@51.5002793,-0.1490781,3a,87.2y,170.82h,66.46t/data=!3m6!1e1!3m4!1sL3GLvqpla79_pSq2fxUunw!2e0!7i16384!8i8192?entry=ttu
+
+Dissecting this example URL provides the following useful information:
+
+Latitude = 51.5002793 = degrees north or south of the equator.
+
+Longitude = -0.1490781 = degrees east or west of the prime meridian.
+
+Pitch = 87.2 = vertical camera orientation in degrees, where horizontal = 90.
+
+Yaw = 170.82 = bearing in degrees relative to North.
+
+FOV = 66.46 = field of view in degrees (smaller FOV, greater zoom).
+
+Panorama ID = L3GLvqpla79_pSq2fxUunw
 """
 import io
 import time
@@ -49,7 +65,13 @@ PANORAMA_ID_PREFIX = "1s"
 
 @dataclass
 class StreetViewURL:
-    """Relevant parsed street view URL information."""
+    """
+    Relevant parsed street view URL information.
+    The toplevel documentation explains each attribute.
+
+    Whilst usually returned after URL parsing, the user may
+    initialise an instance themselves, ensuring all inputs are valid.
+    """
     # A value of the FOV as seen in the URL, between 15 and 90 degrees.
     fov: float
     # Horizontal/vertical offset in degrees.
@@ -63,7 +85,10 @@ class StreetViewURL:
 
 
 def validate_dimensions(width: int, height: int) -> None:
-    """Ensures width and height are in range integers."""
+    """
+    Ensures width and height are in range integers.
+    A sensible width and height range is in place.
+    """
     if not (isinstance(width, int) and isinstance(height, int)):
         raise TypeError("Width and height must be integers.")
     if not MIN_WIDTH <= width <= MAX_WIDTH:
@@ -77,13 +102,23 @@ def validate_dimensions(width: int, height: int) -> None:
 def parse_url(url: str) -> StreetViewURL:
     """
     Thoroughly validates and parses a Google Street View URL.
-    In the process, return the parsed URL with the key information.
-    Key Points:
+    Upon success, return a `StreetViewURL` object providing key information.
+
+    This function can be powerfully used to parse a URL for its panorama
+    ID, by accessing the `panorama_id` attribute of the return object.
+
+    Key requirements:
+
     - Valid Google domain followed by /maps/
-    - Valid latitude and longitude
+
+    - Valid latitude and longitude.
+
     - Valid a, y, h, t values in the URL (h can be omitted, 0 by default).
+        y is pitch, h is yaw, t is FOV, a is irrelevant but must be present.
+
     - Panorama ID is followed by '1s' and must be deducible and valid.
-    - Ignore other data, including query parameters.
+
+    Other extra data is ignored, including query parameters.
     """
     if not isinstance(url, str):
         raise TypeError("URL must be a string.")
@@ -173,8 +208,12 @@ def get_pil_image(
     url: str, width: int = DEFAULT_WIDTH, height = DEFAULT_HEIGHT,
 ) -> Image.Image:
     """
-    Takes a Google Street View URL and returns a PIL Image with a
-    given width and height, with the correct zoom and angle.
+    Takes a Google Street View URL and returns a PIL image with a
+    given width and height representing the input URL,
+    with the correct yaw, pitch and FOV.
+
+    Note: the thumbnail API has slightly limited resolution so the image may
+    be scaled up by the code if needed, without quality improvement.
     """
     validate_dimensions(width, height)
     url_info = parse_url(url)
@@ -211,9 +250,12 @@ def get_image(
     url: str, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
 ) -> bytes:
     """
-    Takes a valid Google Street View URL and returns the image bytes
-    representing the display rendered at the given URL, based on
-    the camera yaw, pitch and zoom.
+    Takes a Google Street View URL and returns an JPEG image in bytes with a
+    given width and height representing the input URL,
+    with the correct yaw, pitch and FOV.
+
+    Note: the thumbnail API has slightly limited resolution so the image may
+    be scaled up by the code if needed, without quality improvement.
     """
     image = get_pil_image(url, width, height)
     with io.BytesIO() as f:

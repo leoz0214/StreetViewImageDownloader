@@ -1,8 +1,21 @@
 """
-This module allows panorama images to be downloaded by the
-internal panorama IDs. The user is responsible for obtaining
+This module allows panorama images to be downloaded by their
+internal panorama IDs. Each panorama ID is a string of 22
+alphanumeric characters alongside - and _, found in Google
+Street View URLs after '1s'. The user is responsible for obtaining
 the panorama IDs for the panoramas they wish to download.
-Also, zooming in/out is supported, alongside partial downloading.
+
+Here is an example of a URL and its corresponding panorama ID:
+https://www.google.co.uk/maps/@51.5002793,-0.1490781,3a,75y,169.86h,65.89t/data=!3m6!1e1!3m4!1sL3GLvqpla79_pSq2fxUunw!2e0!7i16384!8i8192?entry=ttu
+
+Panorama ID: L3GLvqpla79_pSq2fxUunw
+
+Zooming in/out is supported, where there are 6 levels of zoom
+from 0 to 5, with increased resolution for each level.
+
+Partial panorama downloading is also possible, since panoramas
+are split into square tiles, and as zoom increases, the number
+of tiles increases, so a subset of tiles can be downloaded accordingly.
 """
 import asyncio
 import io
@@ -24,7 +37,7 @@ MIN_ZOOM = 0
 MAX_ZOOM = 5
 MIN_COORDINATES = (0, 0)
 
-PANORAMA_CHARACTERS = f"{string.ascii_letters}{string.digits}-_"
+PANORAMA_ID_CHARACTERS = f"{string.ascii_letters}{string.digits}-_"
 PANORAMA_ID_LENGTH = 22
 PANORAMA_DOWNLOAD_API = "https://streetviewpixels-pa.googleapis.com/v1/tile"
 MAX_RETRIES = 2
@@ -34,13 +47,41 @@ TILE_HEIGHT = 512
 MAX_BLACK = (5, 5, 5)
 
 
+def _validate_zoom(zoom: int) -> None:
+    if not isinstance(zoom, int):
+        raise TypeError("Zoom must be an integer.")
+    if zoom < MIN_ZOOM:
+        raise ValueError(f"Zoom must be at least {MIN_ZOOM}.")
+    if zoom > MAX_ZOOM:
+        raise ValueError(f"Zoom must be {MAX_ZOOM} or less.")
+
+
 def get_max_coordinates(zoom: int) -> tuple[int, int]:
-    """Returns the maximum (bottom right) tile coordinates for a given zoom."""
+    """
+    Returns the maximum (bottom right) tile coordinates for a given zoom.
+    If the return coordinate is (x, y), x is the number of columns
+    and y is the number of rows.
+
+    Max coordinates by zoom:
+
+    0 - (1, 1) - 1 tile
+
+    1 - (2, 1) - 2 tiles
+
+    2 - (4, 2) - 8 tiles
+
+    3 - (8, 4) - 32 tiles
+
+    4 - (16, 8) - 128 tiles
+
+    5 - (32, 16) - 512 tiles
+    """
+    _validate_zoom(zoom)  
     return (2 ** zoom, max(1, 2 ** (zoom - 1)))
 
 
 def validate_coordinates(coordinates: tuple[int, int]) -> None:
-    """Raises an error if `coordinates` is not a 2-tuple of integers."""
+    """Raises an error if coordinates is not a 2-tuple of integers."""
     # Expecting a tuple, accept a list too.
     if not isinstance(coordinates, (tuple, list)) or len(coordinates) != 2:
         raise TypeError("Coordinates must be a 2-tuple.")
@@ -50,9 +91,9 @@ def validate_coordinates(coordinates: tuple[int, int]) -> None:
 
 class PanoramaSettings:
     """
-    Allows the user to set the panorama download settings, including:
-    - Level of zoom.
-    - Top left and bottom right coordinates.
+    Stores panorama download settings, including the level of zoom
+    and the top left and bottom right coordinates. By default, zoom
+    is 0 (minimum), and the entire panorama is downloaded.
     """
 
     def __init__(
@@ -75,12 +116,7 @@ class PanoramaSettings:
             self._set_bottom_right(bottom_right)
     
     def _set_zoom(self, zoom: int) -> None:
-        if not isinstance(zoom, int):
-            raise TypeError("Zoom must be an integer.")
-        if zoom < MIN_ZOOM:
-            raise ValueError(f"Zoom must be at least {MIN_ZOOM}.")
-        if zoom > MAX_ZOOM:
-            raise ValueError(f"Zoom must be {MAX_ZOOM} or less.")
+        _validate_zoom(zoom)
         self._zoom = zoom
     
     def _set_top_left(self, top_left: tuple[int, int]) -> None:
@@ -109,7 +145,7 @@ class PanoramaSettings:
     
     @property
     def zoom(self) -> int:
-        """Current zoom level [0-5]"""
+        """Current zoom level, between 0 and 5."""
         return self._zoom
     
     @property
@@ -124,28 +160,40 @@ class PanoramaSettings:
     
     @property
     def tiles(self) -> int:
-        """Number of tiles covered by the current settings."""
+        """
+        Total number of tiles covered by the current settings.
+        Equivalent to the product of the width and height in tiles.
+        """
         return self.width * self.height
 
     @property
     def width(self) -> int:
-        """Width of the tiles covered by the settings."""
+        """
+        Width of the tiles covered by the settings (number of tiles across).
+        """
         return self.bottom_right[0] - self.top_left[0]
     
     @property
     def height(self) -> int:
-        """Height of the tiles covered by the settings."""
+        """
+        Height of the tiles covered by the settings (number of tiles down).
+        """
         return self.bottom_right[1] - self.top_left[1]
     
 
 def validate_panorama_id(panorama_id: str) -> None:
-    """Performs  validation on the panorama ID."""
+    """
+    Performs validation on a panorama ID.
+    The panorama ID must be a 22 character string consisting
+    of letters, numbers, and dashes/underscores only.
+    Note: the existence of valid panorama IDs is not checked.
+    """
     if not isinstance(panorama_id, str):
         raise TypeError("Panorama ID must be a string.")
     if len(panorama_id) != PANORAMA_ID_LENGTH:
         raise ValueError(
             f"Panorama ID must be {PANORAMA_ID_LENGTH} characters long.")
-    if any(char not in PANORAMA_CHARACTERS for char in panorama_id):
+    if any(char not in PANORAMA_ID_CHARACTERS for char in panorama_id):
         raise ValueError(
             "Panorama ID must only contain letters, numbers "
             "and dashes/underscores.")
@@ -207,11 +255,11 @@ def get_tiles(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> list[list[bytes]]:
     """
-    Returns a 2D list of images in bytes, where each element is
-    one tile at one (x, y) coordinate, as defined in the settings.
-    If settings are not provided, use the default settings.
-    If use_async is set to True, then speed up image downloads using
-    asynchronous processing. Otherwise, use standard, serial requests.
+    Returns a 2D list of JPEG images in bytes, where each element is
+    one tile at one (x, y) coordinate, as defined in the panorama settings.
+    If `settings` are not provided, use the default settings.
+    If `use_async` is set to True, then speed up image downloads using
+    asynchronous processing. Otherwise, use serial requests.
     """
     validate_panorama_id(panorama_id)
     if settings is None:
@@ -260,9 +308,8 @@ def get_pil_tiles(
     panorama_id: str, settings: PanoramaSettings = None, use_async: bool = True
 ) -> list[list[Image.Image]]:
     """
-    Returns a 2D list of PIL Image objects, where each Image represents a tile
-    at a particular (x, y) coordinate specified in the settings.
-    If settings are not provided, use the default settings.
+    Returns a 2D list of PIL images representing each downloaded tile.
+    See the `get_tiles` documentation for more information.
     """
     tiles = get_tiles(panorama_id, settings, use_async)
     return [[Image.open(io.BytesIO(tile)) for tile in row] for row in tiles]
@@ -359,6 +406,12 @@ def get_pil_panorama(
     """
     Downloads all required tiles of a panorama,
     and then merges the tiles together, returning a single PIL Image.
+    Default panorama settings are used if not supplied.
+    By default, asynchronous processing is used, otherwise serial
+    requests are performed if `use_async` is set to False.
+    Many panoramas have entirely black rows and columns at the
+    bottom and on the right, which are stripped away provided
+    `crop_black_edges` is set to True.
     """
     if settings is None:
         settings = PanoramaSettings()
@@ -371,8 +424,9 @@ def get_panorama(
     use_async: bool = True, crop_black_edges = True
 ) -> bytes:
     """
-    Downloads all required tiles of a panorama and returns the image
-    with the merged tiles, in bytes.
+    Downloads all required tiles of a panorama, and then merges the tiles
+    together, returning the resulting JPEG image in bytes.
+    For more information, see the `get_pil_panorama` documentation.
     """
     image = get_pil_panorama(
         panorama_id, settings, use_async, crop_black_edges)
