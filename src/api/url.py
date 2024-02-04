@@ -32,7 +32,10 @@ from PIL import Image
 try:
     from api.panorama import validate_panorama_id
 except ImportError:
-    from panorama import validate_panorama_id
+    try:
+        from panorama import validate_panorama_id
+    except ImportError:
+        from .panorama import validate_panorama_id
 
 
 THUMBNAIL_API = "https://geo0.ggpht.com/cbk"

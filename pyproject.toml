@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0", "aiohttp", "requests", "pillow"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["streetview_download"]
+package-dir = { "streetview_download" = "src/api" }
+
+[project]
+name = "streetview-download"
+version = "1.0.0"
+authors = [
+  { name="Leo Zhang" },
+]
+description = "A small Python library to download Google Street View panoramas and URL views."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/leoz0214/StreetViewImageDownloader"
+Issues = "https://github.com/leoz0214/StreetViewImageDownloader/issues"
+Documentation = "https://streetviewimagedownloader.readthedocs.io/en/latest"
+Source = "https://github.com/leoz0214/StreetViewImageDownloader/tree/main/src/api"

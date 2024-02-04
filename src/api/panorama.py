@@ -22,6 +22,7 @@ import io
 import itertools
 import string
 import time
+from contextlib import suppress
 
 import aiohttp
 import requests as rq
@@ -30,7 +31,10 @@ from PIL import Image
 try:
     from api._utils import _split_array, _in_rectangle
 except ImportError:
-    from _utils import _split_array, _in_rectangle
+    try:
+        from _utils import _split_array, _in_rectangle
+    except ImportError:
+        from ._utils import _split_array, _in_rectangle
 
 
 MIN_ZOOM = 0
@@ -268,7 +272,9 @@ def get_tiles(
         raise TypeError("Settings must be a PanoramaSettings object.")
     if use_async and settings.tiles > 1:
         images = [[None] * settings.width for _ in range(settings.height)]
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        with suppress(Exception):
+            asyncio.set_event_loop_policy(
+                asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(_get_async_images(images, panorama_id, settings))
         return images
     # Serial requests.

@@ -2,3 +2,4 @@
 testing/test_outputs/
 *.so
 docs/_*
+dist/
