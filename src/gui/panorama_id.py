@@ -19,7 +19,7 @@ from _utils import (
     inter, RED, GREEN, BLUE, GREY, BLACK, DARK_BLUE, draw_circle,
     BUTTON_COLOURS, bool_to_state)
 from api.panorama import (
-    PANORAMA_CHARACTERS, PANORAMA_ID_LENGTH, MIN_ZOOM, MAX_ZOOM,
+    PANORAMA_ID_CHARACTERS, PANORAMA_ID_LENGTH, MIN_ZOOM, MAX_ZOOM,
     get_max_coordinates, PanoramaSettings, _combine_tiles,
     _get_async_images)
 
@@ -116,7 +116,7 @@ class PanoramaIDInput(tk.Frame):
         new = self._panorama_id.get()
         if (
             len(new) > PANORAMA_ID_LENGTH
-            or any(char not in PANORAMA_CHARACTERS for char in new)
+            or any(char not in PANORAMA_ID_CHARACTERS for char in new)
         ):
             self._panorama_id.set(self._previous)
         else:

@@ -203,7 +203,14 @@ MAPS_URL = "https://www.google.com/maps"
 TIME_BETWEEN_CHECKS = 0.02
 TIME_BETWEEN_INFO_REFRESH_MS = 100
 
-get_foreground_pid = load_cpp_foreground_pid_library().get_foreground_pid
+try:
+    get_foreground_pid = load_cpp_foreground_pid_library().get_foreground_pid
+except Exception:
+    get_foreground_pid = lambda: None
+    print(
+        "Warning: Foreground window check not possible "
+        "as required C++ object file not found. "
+        "Capture by keybind no longer works for live downloading.")
 
 
 class LiveDownloading(tk.Frame):

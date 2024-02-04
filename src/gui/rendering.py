@@ -32,9 +32,16 @@ MIN_LENGTH = 64
 MAX_LENGTH = 625
 DEFAULT_LENGTH = 512 
 # C++ functions
-conversion = load_cpp_conversion_library()
-set_cubemap = conversion.set_cubemap
-project = conversion.project
+try:
+    conversion = load_cpp_conversion_library()
+    set_cubemap = conversion.set_cubemap
+    project = conversion.project
+    CAN_RENDER = True
+except Exception as e:
+    CAN_RENDER = False
+    print(
+        "Warning: Rendering not possible as required "
+        "C++ object file not found.")
 
 # Initial yaw, pitch and FOV values.
 DEFAULT_YAW = 0

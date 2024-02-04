@@ -9,7 +9,7 @@ import live
 import panorama_id
 import rendering
 import url
-from _utils import inter, BUTTON_COLOURS
+from _utils import inter, BUTTON_COLOURS, bool_to_state
 
 
 TITLE = "Street View Image Downloader"
@@ -38,7 +38,8 @@ class MainMenu(tk.Frame):
             **BUTTON_COLOURS, command=self.batch)
         self.panorama_rendering_button = tk.Button(
             self, font=inter(20), text="Panorama Rendering", width=20,
-            **BUTTON_COLOURS, command=self.panorama_rendering)
+            **BUTTON_COLOURS, command=self.panorama_rendering,
+            state=bool_to_state(rendering.CAN_RENDER))
         self.live_button = tk.Button(
             self, font=inter(20), text="Live", width=20,
             **BUTTON_COLOURS, command=self.live)
@@ -66,7 +67,7 @@ class MainMenu(tk.Frame):
         batch.BatchDownload(self.root).pack()
     
     def panorama_rendering(self) -> None:
-        """Proceeds to the panorama rendering screen."""
+        """Proceeds to the panorama rendering screen.""" 
         self.destroy()
         rendering.PanoramaRendering(self.root).pack()
     
