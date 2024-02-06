@@ -3,8 +3,10 @@ import sys
 from ctypes import windll
 
 
-sys.path.append(str(pathlib.Path(__file__).parent.parent))
-sys.path.append(str(pathlib.Path(__file__).parent))
+if hasattr(sys, "_MEIPASS"):
+    sys.path.append(f"{sys._MEIPASS}/src") 
+else:
+    sys.path.append(str(pathlib.Path(__file__).parent.parent))
 
 # Make GUI DPI aware - significant GUI quality improvement.
 windll.shcore.SetProcessDpiAwareness(True)

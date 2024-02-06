@@ -1,19 +1,25 @@
 """Utilities for the GUI."""
 import ctypes
 import pathlib
+import sys
 import tkinter as tk
 from tkinter.font import Font
 
 import pyglet
 
 
-BIN_FOLDER = pathlib.Path(__file__).parent / "bin"
-CPP_FOLDER = pathlib.Path(__file__).parent / "cpp"
+if hasattr(sys, "_MEIPASS"):
+    GUI_FOLDER = pathlib.Path(sys._MEIPASS) / "src" / "gui"
+else:
+    GUI_FOLDER = pathlib.Path(__file__).parent
+BIN_FOLDER = GUI_FOLDER / "bin"
+CPP_FOLDER = GUI_FOLDER / "cpp"
 CPP_FOREGROUND_PID_LIBRARY = CPP_FOLDER / "foreground.so"
 CPP_CONVERSION_LIBRARY = CPP_FOLDER / "conversion.so"
 
 # Load Inter font downloaded online.
 pyglet.font.add_file(str(BIN_FOLDER / "Inter.ttf"))
+ICON_FILE = BIN_FOLDER / "icon.ico"
 
 
 RED = "#ff0000"

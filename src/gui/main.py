@@ -9,7 +9,7 @@ import live
 import panorama_id
 import rendering
 import url
-from _utils import inter, BUTTON_COLOURS, bool_to_state
+from _utils import inter, BUTTON_COLOURS, bool_to_state, ICON_FILE
 
 
 TITLE = "Street View Image Downloader"
@@ -100,6 +100,7 @@ class Menu(tk.Menu):
 def main() -> None:
     """Main procedure of the program."""
     root = tk.Tk()
+    root.iconbitmap(ICON_FILE)
     main_menu = MainMenu(root)
     main_menu.pack()
     root.mainloop()
