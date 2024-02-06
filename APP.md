@@ -123,8 +123,9 @@ For example, after applying zoom 3 for all panoramas being downloaded, this is t
 <img src="app_images/batch_after_settings.PNG">
 
 - It is also possible to edit/delete existing inputs. Simply click into the appropriate row to edit or delete and the following window appears:
-<img src="app_images/batch_edit.PNG">
-Make any changes to the inputs and press 'Edit', or press 'Delete' to delete the row entirely.
+    <img src="app_images/batch_edit.PNG">
+
+    Make any changes to the inputs and press 'Edit', or press 'Delete' to delete the row entirely.
 - It is possible to export the inputs to a **CSV** file for convenience. This will result in two relevant heading names as seen in the table followed by the rows of inputs.
 - Likewise, it is also possible to import inputs for both panorama IDs and URLs from a CSV file. The first column is expected to be panorama IDs or URLs, and the second is expected to be the file save paths. Only the first two columns are considered, and all inputs must be valid. The first row is ignored to account for **headings**, otherwise is included if valid, and the rest of the rows must be valid or else the import will fail. The import will overwrite any existing rows in the input table upon confirmaton.
 - The **Stop Upon Error** option can be selected to terminate batch downloading upon any error, whether it is network related, IO related, due to a missing panorama, or any other reason, otherwise errors are just logged and the download continues if possible.
