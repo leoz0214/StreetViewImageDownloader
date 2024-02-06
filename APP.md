@@ -123,7 +123,8 @@ For example, after applying zoom 3 for all panoramas being downloaded, this is t
 <img src="app_images/batch_after_settings.PNG">
 - It is also possible to edit/delete existing inputs. Simply click into the appropriate row to edit or delete and the following window appears:
 <img src="app_images/batch_edit.PNG">
-Make any changes to the inputs and press 'Edit', or press 'Delete' to delete the row entirely.
+
+    Make any changes to the inputs and press 'Edit', or press 'Delete' to delete the row entirely.
 - It is possible to export the inputs to a **CSV** file for convenience. This will result in two relevant heading names as seen in the table followed by the rows of inputs.
 - Likewise, it is also possible to import inputs for both panorama IDs and URLs from a CSV file. The first column is expected to be panorama IDs or URLs, and the second is expected to be the file save paths. Only the first two columns are considered, and all inputs must be valid. The first row is ignored to account for **headings**, otherwise is included if valid, and the rest of the rows must be valid or else the import will fail. The import will overwrite any existing rows in the input table upon confirmaton.
 - The **Stop Upon Error** option can be selected to terminate batch downloading upon any error, whether it is network related, IO related, due to a missing panorama, or any other reason, otherwise errors are just logged and the download continues if possible.
@@ -135,6 +136,7 @@ Note, despite this example focusing on panorama ID only, this information can be
 
 Now, upon successful downloading, the following screen is expected:
 <img src="app_images/batch_finish.PNG">
+
 - The download progress has been displayed and upon success, has reached 100%.
 - Relevant logging has been included.
 - During the download, cancelling the download will stop the processing and close the top level. By closing the top level window, downloading will also automatically be cancelled.
@@ -142,6 +144,7 @@ Now, upon successful downloading, the following screen is expected:
 ## Panorama Rendering
 Another feature of the app is built-in rendering, allowing panoramas to be rendered onto a square projection with the ability to control the camera view. Upon entering the panorama rendering section, this is shown:
 <img src="app_images/panorama_rendering_blank.PNG">
+
 - There are two methods of inputting the panorama, either by providing the **panorama ID** directly or providing a valid **Street View URL** and allowing the program to extract the panorama ID from it. Select the one you are more comfortable using.
 - The panorama zoom must be set to either 4 or 5. In summary, zoom 4 rendering is faster and less memory intensive than zoom 5, but zoom 5 has the better quality than zoom 4. Ensure you make the appropriate choice based on your requirements.
 
@@ -150,8 +153,10 @@ Here is a sample complete input, inputting a panorama ID directly and using zoom
 
 Upon starting, firstly, the panorama tiles must be downloaded, and then the cubemap for rendering purposes must be generated, taking a few seconds. Once done, the projection screen is then available:
 <img src="app_images/panorama_rendering_screen.PNG">
+
 - The **projected image** is clearly shown. Use your **mouse** to drag around to move, and scroll to zoom in and out just like on Google Street View. After some movement, this is the result:
 <img src="app_images/panorama_rendering_movement.PNG">
+
 - You can set the square length (width/height) of the projected image between 64 and 625 pixels.
 - For advanced users, there is the option to manually adjust the yaw, pitch and FOV angles too, simply by modifying the corresponding inputs. All angles are in degrees.
     - Yaw range: [0, 360)
@@ -211,6 +216,7 @@ Once you are done, to stop the live tracking, simply press the 'Stop' button or 
 
 The output log after a successful session may look like this:
 <img src="app_images/live_log.PNG">
+
 You can export this log to plain text using the 'Export Log' button.
 
 The Live Downloading feature is an interesting one, feel free to experiment with it to understand it better if the tutorial is insufficient.
